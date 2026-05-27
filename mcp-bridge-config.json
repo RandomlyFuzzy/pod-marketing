@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "scrapling": {
+      "command": "scrapling",
+      "args": ["mcp"],
+      "description": "Web scraping tools - fetch, search, extract content from any URL"
+    },
+    "pod-market": {
+      "command": "/home/rf/Documents/pod_marketing/mcp_server/venv/bin/python",
+      "args": ["-m", "mcp_server"],
+      "cwd": "/home/rf/Documents/pod_marketing/mcp_server",
+      "description": "eBay, Etsy, and Printify POD market research tools"
+    }
+  }
+}
