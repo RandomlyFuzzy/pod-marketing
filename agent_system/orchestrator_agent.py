@@ -12,8 +12,8 @@ from .opnbrain import save_conversation, publish_concept, search_brain
 from .registry import list_agents, get_agent
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("ORCHESTRATOR_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
-SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+OLLAMA_MODEL = os.environ.get("ORCHESTRATOR_MODEL", os.environ.get("OLLAMA_MODEL", "planner-model"))
+SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", os.environ.get("OLLAMA_MODEL", "summarizer-model"))
 OUTPUT_DIR = os.environ.get("AGENT_OUTPUT_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "sessions"))
 TEMP_DIR = os.path.join(os.path.dirname(OUTPUT_DIR), "temp")
 PLANNER_STORE = os.path.join(os.path.dirname(OUTPUT_DIR), "planner_store")

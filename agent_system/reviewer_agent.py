@@ -21,7 +21,7 @@ except ImportError:
     import urllib.error
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("REVIEWER_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+OLLAMA_MODEL = os.environ.get("REVIEWER_MODEL", os.environ.get("OLLAMA_MODEL", "reviewer-model"))
 
 
 @function_tool

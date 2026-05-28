@@ -23,7 +23,7 @@ except ImportError:
     import urllib.error
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+OLLAMA_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("OLLAMA_MODEL", "planner-model"))
 PLANNER_STORE = os.environ.get("PLANNER_STORE", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "planner_store"))
 os.makedirs(PLANNER_STORE, exist_ok=True)
 
