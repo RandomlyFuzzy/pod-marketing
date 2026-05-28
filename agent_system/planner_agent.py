@@ -122,8 +122,10 @@ async def create_plan(title: str, phases: str) -> str:
     content = "\n".join(lines)
     path = save_conversation(title=f"Plan - {title}", model=OLLAMA_MODEL,
                              tags=["plan"], is_chat=False, prompt="", response=content)
-    for phase in phases:
-        publish_concept(phase.get("name", ""))
+    for line in phases.strip().split("\n"):
+        name = line.split("|")[0].strip() if "|" in line else line.strip()
+        if name:
+            publish_concept(name)
     return f"Plan saved: {path}\n\n{content}"
 
 
@@ -142,34 +144,80 @@ async def create_planner_agent() -> Agent:
     return Agent(
         name="PlannerAgent",
         instructions=(
-            "You are a planner agent. Your job is to break complex goals into manageable phases, "
-            "create specialized subagents for each phase, delegate the work, and track progress.\n\n"
-            "YOUR WORKFLOW:\n"
-            "1. Receive a high-level goal from the user\n"
-            "2. Check the brain with `brain_search` for prior context\n"
-            "3. Break the goal into phases — each phase should have a clear purpose\n"
-            "4. For each phase that needs a specialist, call `create_agent_type` to make a "
-            "custom subagent with precise instructions for that specific task\n"
-            "5. Call `create_plan` to save the full plan to the brain\n"
-            "6. Execute each phase by calling `delegate_to_agent` with the right subagent\n"
-            "7. Track key concepts with `brain_track_concept`\n"
-            "8. After all phases complete, synthesize and save final results with `brain_save_note`\n\n"
-            "YOUR TOOLS:\n"
-            "- `list_agent_types()` — see available agents\n"
-            "- `create_agent_type(name, instructions, description)` — create a custom subagent\n"
-            "- `delegate_to_agent(agent_type, task)` — run a subagent\n"
-            "- `create_plan(title, phases)` — save a plan (phases is newline-separated: \"Name | AgentType | Goal\")\n"
+            "You are a Planner agent — a hierarchical decomposition specialist. "
+            "Your ONLY job is to break goals into step-by-step dependency chains and DELEGATE each step. "
+            "You NEVER do research, write code, or produce content yourself. You decompose and delegate.\n\n"
+            "## DECOMPOSITION METHOD: \"TO DO A, I NEED B AND C\"\n"
+            "You break goals down like this:\n"
+            "  \"To achieve the goal, I first need X. To get X, I need Y and Z. "
+            "Z is complex, so to get Z I need Q, R, and S...\"\n\n"
+            "Work backwards from the goal. Ask: what MUST exist before this step? "
+            "Build a dependency tree where each node is one atomic agent call.\n\n"
+            "## EXAMPLE\n"
+            "Goal: \"Create a product listing for a custom beach bag\"\n"
+            "  Step 1: Research trending beach bag styles, materials, and price points (agent: research)\n"
+            "  Step 2: Check Google Trends for beach bag demand validation (agent: research)\n"
+            "  Step 3: Analyze competitors and find differentiation angles (agent: research)\n"
+            "    Step 3a (if needed): Scrape top 5 competitor listings for keywords (agent: scourer)\n"
+            "    Step 3b: Compile competitor analysis report (agent: create_agent_type → delegate)\n"
+            "  Step 4: Write product title, description, tags using research data (agent: product_producer)\n"
+            "  Step 5: Set pricing based on competitor data + cost analysis (agent: product_producer)\n\n"
+            "## YOUR WORKFLOW\n"
+            "1. Call `brain_search` for prior context\n"
+            "2. Call `list_agent_types` to see available agents\n"
+            "3. Build the dependency chain: \"To do A, I need B. To do B, I need C and D...\"\n"
+            "4. Flatten the tree into a numbered execution order (dependencies first)\n"
+            "5. For each step that needs a specialist no existing agent covers, call "
+            "`create_agent_type` with precise instructions, then delegate to it\n"
+            "6. Execute steps IN ORDER by calling `delegate_to_agent` for each one\n"
+            "7. Pass context between steps (include prior results in the next task description)\n"
+            "8. After ALL steps execute, synthesize everything\n\n"
+                        "## OUTPUT FORMAT — MUST BE A REPRODUCIBLE RUNBOOK\n"
+            "Your output must be so detailed that a human could re-run every step manually. Include:\n\n"
+            "  **DECOMPOSITION REASONING:**\n"
+            "  To do [goal], I need:\n"
+            "    → Step 1: [name] (agent: [type]) — because [why this must come first]\n"
+            "    → Step 2: [name] (agent: [type]) — because [dependency rationale]\n"
+            "      → Step 2a: [sub-step] — because step 2 is complex, it needs...\n"
+            "    → Step 3: ...\n\n"
+            "  **EXECUTION LOG:**\n"
+            "  --- Step 1: [name] ---\n"
+            "  Agent: [type]\n"
+            "  Full Prompt Sent:\n"
+            "  ```\n"
+            "  [EXACT task string passed to delegate_to_agent]\n"
+            "  ```\n"
+            "  Result Received:\n"
+            "  ```\n"
+            "  [EXACT output from agent]\n"
+            "  ```\n"
+            "  --- Step 2: [name] ---\n"
+            "  Agent: [type]\n"
+            "  Full Prompt Sent:\n"
+            "  ```\n"
+            "  ...\n"
+            "  ```\n"
+            "  Result Received:\n"
+            "  ```\n"
+            "  ...\n"
+            "  ```\n\n"
+            "  **SYNTHESIS:**\n"
+            "  [Combined results and what they mean for the overall goal]\n\n"
+            "## TOOLS\n"
+            "- `list_agent_types()` — see what agents exist\n"
+            "- `create_agent_type(name, instructions, description)` — make a custom sub-agent\n"
+            "- `delegate_to_agent(agent_type, task)` — RUN a sub-agent (MUST call for every step)\n"
+            "- `create_plan(title, phases)` — save plan (\"StepName | AgentType | Task\" per line)\n"
             "- `brain_search(query)` — search memory\n"
             "- `brain_track_concept(name)` — track concepts\n"
             "- `brain_save_note(title, content, tags)` — save notes\n\n"
-            "CRITICAL RULES:\n"
-            "- Create subagents with specific, focused instructions for each phase\n"
-            "- After creating a subagent, delegate to it immediately\n"
-            "- Track every major concept that appears\n"
-            "- Save the plan BEFORE executing phases\n"
-            "- Synthesize all phase results into a final summary\n"
-            "- Use named params: create_agent_type(name=\"...\", instructions=\"...\")\n"
-            "- For create_plan: create_plan(title=\"My Plan\", phases=\"PhaseName | agent_type | goal\\nPhase2 | ...\")"
+            "## CRITICAL RULES\n"
+            "- Every step must start with \"To do X, I need Y\" reasoning\n"
+            "- If a step is complex, decompose it into sub-steps before executing\n"
+            "- You MUST call `delegate_to_agent` for EVERY leaf step — no exceptions\n"
+            "- The task description must include ALL prior context the agent needs\n"
+            "- Pass results from earlier steps as context to later steps\n"
+            "- Use named params: delegate_to_agent(agent_type=\"research\", task=\"...\")"
         ),
         model=model,
         tools=[
@@ -186,5 +234,7 @@ async def create_planner_agent() -> Agent:
 
 async def run_planner(task: str, max_turns: int = 25) -> str:
     agent = await create_planner_agent()
+    print(f"  ⚙ Planner thinking...")
     result = await Runner.run(agent, task, max_turns=max_turns)
+    print(f"  ⚙ Planner finished")
     return result.final_output

@@ -1,6 +1,7 @@
-"""Orchestrator agent — uses registry directly to delegate to specialized agents."""
+"""Orchestrator — self-governing loop: plan → execute → review → re-plan until all goals are met."""
 import os
 import sys
+import uuid
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
@@ -10,7 +11,7 @@ from agents.mcp import MCPServerStdio
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 
 from .opnbrain import save_conversation, publish_concept, search_brain
-from .registry import list_agents, get_agent, create_agent, CORE_MCP_SERVERS, CORE_TOOLS
+from .registry import list_agents, get_agent
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
@@ -18,13 +19,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
 
 @function_tool
 async def brain_save_note(title: str, content: str, tags: list[str] | str | None = None) -> str:
-    """Save a note or conversation to the brain.
-    
-    Args:
-        title: Short descriptive title (3-8 words)
-        content: The note body in markdown
-        tags: Optional category tags (comma-separated string or list)
-    """
+    """Save a note to brain memory."""
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     path = save_conversation(title=title, model=OLLAMA_MODEL, tags=tags or [],
@@ -41,7 +36,7 @@ async def brain_track_concept(name: str) -> str:
 
 @function_tool
 async def brain_search(query: str) -> str:
-    """Search the brain's memory."""
+    """Search the brain's memory for past sessions, plans, reviews."""
     return search_brain(query)
 
 
@@ -62,13 +57,36 @@ async def list_agent_types() -> str:
 async def delegate_to_agent(agent_type: str, task: str) -> str:
     """Create and run a specialized agent with a task.
     
-    Each agent type has access to: Scrapling web tools, Google Trends, brain memory.
-    Available agent types can be listed with list_agent_types.
+    IMPORTANT — the agent gets FULL access to Scrapling web tools, Google Trends,
+    and brain memory. Give it a detailed, specific task.
+    
+    Planner and reviewer agents get their full toolkits (subagent creation, planning,
+    review templates). Other agents get the core toolkit + Scrapling.
     
     Args:
-        agent_type: The type of agent to run (e.g. research, scourer, coder, idea_generator, product_producer, email_reader)
-        task: Clear, detailed task description for the agent
+        agent_type: The type of agent (research, scourer, coder, planner, reviewer,
+                    idea_generator, product_producer, email_reader)
+        task: Clear, detailed task description
     """
+    # Show live progress
+    task_preview = task[:120].replace("\n", " ")
+    print(f"\n  ▶︎ Delegating to [{agent_type}] agent...")
+
+    # Planner and reviewer have dedicated modules with full toolkits
+    if agent_type == "planner":
+        from .planner_agent import run_planner
+        print(f"    Task: {task_preview}")
+        result = await run_planner(task, max_turns=15)
+        print(f"  ✓ [{agent_type}] done")
+        return result
+    elif agent_type == "reviewer":
+        from .reviewer_agent import run_reviewer
+        print(f"    Task: {task_preview}")
+        result = await run_reviewer(task, max_turns=15)
+        print(f"  ✓ [{agent_type}] done")
+        return result
+
+    # All other agents use the generic definition-based path
     from .base import create_agent_from_definition
 
     definition = get_agent(agent_type)
@@ -76,7 +94,7 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
         types = [a["name"] for a in list_agents()]
         return f"Agent type '{agent_type}' not found. Available: {', '.join(types)}"
 
-    python = os.environ.get("AGENT_MANAGER_PYTHON", sys.executable)
+    print(f"    Task: {task_preview}")
     async with MCPServerStdio(
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
@@ -87,6 +105,7 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
             extra_mcp_servers=[scrapling],
         )
         result = await Runner.run(agent, task, max_turns=12)
+        print(f"  ✓ [{agent_type}] done")
         return result.final_output
 
 
@@ -97,6 +116,68 @@ def _make_ollama_client():
     )
 
 
+SYSTEM_PROMPT = """You are the Orchestrator — a self-governing agent that autonomously completes complex goals through Plan → Execute → Review → Re-plan iterations.
+
+You delegate ALL actual work to sub-agents. You NEVER do the work yourself — you orchestrate.
+
+Your final output must be a complete runbook that a human could follow to reproduce every step.
+
+## THE SELF-GOVERNANCE LOOP
+
+You run this loop autonomously until all goals are met:
+
+### 1. PLAN
+Call `delegate_to_agent(agent_type="planner", task="...")` to break down your goal.
+The planner will produce a step-by-step decomposition with full reasoning and execution log.
+Save the plan to the brain with `brain_save_note`.
+
+### 2. EXECUTE
+For EACH phase in the plan, call `delegate_to_agent` with the right agent type.
+Give each agent a VERY SPECIFIC task — what to research, what format to output, what questions to answer.
+Track all results with `brain_save_note`.
+
+### 3. REVIEW
+Call `delegate_to_agent(agent_type="reviewer", task="...")` passing the goal, all results, and asking: are all goals met? What's missing?
+The reviewer will return a detailed audit with each criterion checked and evidence.
+
+### 4. DECIDE
+- If **ALL GOALS MET** → save final synthesis to brain, return results to user, DONE.
+- If **REMAINING GAPS** exist → feed the gaps back into the planner (GOTO step 1).
+
+The planner will automatically break remaining gaps into finer-grained sub-phases. This recursive decomposition continues until every leaf task is small enough for a specialist agent to complete, and the reviewer confirms everything is satisfied.
+
+## FINAL OUTPUT — REPRODUCIBLE RUNBOOK
+When all goals are met, your final output MUST include:
+
+**GOAL:** <original goal>
+
+**ITERATIONS COMPLETED:** <number>
+
+**FULL EXECUTION LOG:**
+
+For each iteration, include:
+- **Iteration N:**
+  - **Plan output** (from planner)
+  - **Execution results** (per-phase prompts + results)
+  - **Review verdict** (criteria + gaps found)
+  - **Re-plan input** (if gaps existed)
+
+**FINAL SYNTHESIS:** <combined results>
+
+This must be complete enough that a human could re-run every step manually.
+
+## RULES
+1. You MUST call `delegate_to_agent` for actual work — do not simulate or fabricate results.
+2. Save EVERY intermediate result to the brain for audit trail.
+3. Track EVERY concept you encounter with `brain_track_concept`.
+4. Use `brain_search` at the start to check for prior context.
+5. After "ALL GOALS MET", save a final summary and return it to the user.
+6. If stuck on a phase, create a more specific sub-plan via the planner rather than guessing.
+7. NEVER stop after one iteration if goals remain unmet — keep looping.
+8. Give each agent a detailed task with: context, what to produce, format expectations.
+9. Your final output must be a complete runbook — every prompt sent and every result received."""
+
+
 async def create_orchestrator_agent() -> Agent:
     client = _make_ollama_client()
     model = OpenAIChatCompletionsModel(model=OLLAMA_MODEL, openai_client=client)
@@ -104,36 +185,7 @@ async def create_orchestrator_agent() -> Agent:
 
     return Agent(
         name="OrchestratorAgent",
-        instructions=(
-            "You are an orchestrator agent that manages a registry of specialized agents.\n\n"
-            "YOUR WORKFLOW:\n"
-            "1. Receive a high-level request from the user\n"
-            "2. Check the brain with `brain_search` for prior context\n"
-            "3. Break the request into subtasks\n"
-            "4. For each subtask, pick the right agent type and call `delegate_to_agent`\n"
-            "5. Track concepts with `brain_track_concept`\n"
-            "6. Save final synthesis with `brain_save_note`\n\n"
-            "AVAILABLE AGENT TYPES (use list_agent_types to see all):\n"
-            "- research: deep topic investigation (Scrapling + Trends)\n"
-            "- scourer: broad data collection from multiple sources\n"
-            "- idea_generator: creative ideation from brain knowledge\n"
-            "- product_producer: product listing creation\n"
-            "- coder: code writing and analysis\n"
-            "- email_reader: email summarization\n"
-            "- planner: multi-phase planning with subagent creation\n"
-            "- reviewer: quality review with structured feedback\n\n"
-            "YOUR TOOLS:\n"
-            "- `list_agent_types()` — show all registered agents\n"
-            "- `delegate_to_agent(agent_type, task)` — run a specialized agent\n"
-            "- `brain_search(query)` — search memory\n"
-            "- `brain_track_concept(name)` — track concepts\n"
-            "- `brain_save_note(title, content, tags)` — save notes\n\n"
-            "CRITICAL RULES:\n"
-            "- For each subtask, you MUST actually call `delegate_to_agent`.\n"
-            "  Do not just say you will — invoke the tool.\n"
-            "- Use named params: delegate_to_agent(agent_type=\"research\", task=\"...\")\n"
-            "- After delegation, synthesize results and save to brain."
-        ),
+        instructions=SYSTEM_PROMPT,
         model=model,
         tools=[
             list_agent_types,
@@ -145,7 +197,12 @@ async def create_orchestrator_agent() -> Agent:
     )
 
 
-async def run_orchestrator(task: str, max_turns: int = 20) -> str:
+async def run_orchestrator(goal: str, max_turns: int = 100) -> str:
+    print(f"\n{'='*50}")
+    print(f"  Orchestrator — Self-Governing Loop")
+    print(f"  Goal: {goal[:100]}")
+    print(f"{'='*50}")
     agent = await create_orchestrator_agent()
-    result = await Runner.run(agent, task, max_turns=max_turns)
+    result = await Runner.run(agent, goal, max_turns=max_turns)
+    print(f"{'='*50}")
     return result.final_output
