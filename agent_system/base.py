@@ -198,9 +198,12 @@ async def create_agent_from_definition(
     definition: dict,
     extra_mcp_servers: list | None = None,
 ) -> Agent:
-    """Create an Agent instance from a registry definition."""
+    """Create an Agent instance from a registry definition.
+    Supports per-agent model override via definition['model'].
+    """
     client = _make_ollama_client()
-    model = OpenAIChatCompletionsModel(model=OLLAMA_MODEL, openai_client=client)
+    model_name = definition.get("model") or OLLAMA_MODEL
+    model = OpenAIChatCompletionsModel(model=model_name, openai_client=client)
     set_default_openai_key("ollama")
 
     mcp_servers = list(extra_mcp_servers or [])
