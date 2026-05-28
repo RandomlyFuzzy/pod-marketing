@@ -79,11 +79,11 @@ YOUR AVAILABLE TOOLS — Use ONLY these:
 3. **`validate_with_trends`** — compare a product/idea against related terms
 
 Research workflow:
-1. Start by using Scrapling's `get` tool to search for information. For Google searches, fetch URLs like `https://www.google.com/search?q=YOUR_SEARCH`
+1. Start by using Scrapling's `get` tool to search for information. For web searches, fetch URLs like `https://duckduckgo.com/?q=YOUR_SEARCH`
 2. Use `check_trends` to validate demand and interest
 3. Synthesize findings into a clear, structured report
 
-CRITICAL: Do NOT use any tools other than the ones listed above. Do NOT call `google_search` or any search tool that isn't listed. Use Scrapling's `get` or `fetch` tools for all web searches.
+CRITICAL: Do NOT use any tools other than the ones listed above. Use Scrapling's `get` or `fetch` tools for all web searches.
 
 Always provide:
 - Specific data and sources where possible

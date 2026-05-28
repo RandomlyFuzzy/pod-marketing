@@ -49,8 +49,8 @@ async def research_niche(topic: str, keywords: list[str]) -> str:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(
-                    "https://www.google.com/search",
-                    params={"q": kw, "num": 5},
+                    "https://html.duckduckgo.com/html/",
+                    params={"q": kw},
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Accept": "text/html",

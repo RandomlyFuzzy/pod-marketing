@@ -64,7 +64,7 @@ Every agent automatically gets these capabilities. They cannot be changed throug
 
 | Tool | Purpose |
 |------|---------|
-| `get(url, ...)` | HTTP GET request — use for web searches with Google URLs |
+| `get(url, ...)` | HTTP GET request — use for web searches with DuckDuckGo URLs |
 | `fetch(url, ...)` | Playwright browser fetch for JS-heavy pages |
 | `stealthy_fetch(url, ...)` | Anti-bot bypass for protected pages |
 | `bulk_get(urls, ...)` | Multiple HTTP GET requests in parallel |
