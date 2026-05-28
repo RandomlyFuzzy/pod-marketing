@@ -84,6 +84,10 @@ async def log_task_status(session_id: str, step: str, task: str, status: str, de
         response=content,
     )
     return f"Task status logged: {path}"
+
+
+@function_tool
+async def delegate_to_agent(agent_type: str, task: str) -> str:
     """Create and run a specialized agent with a task.
     
     IMPORTANT — the agent gets FULL access to Scrapling web tools, Google Trends,
