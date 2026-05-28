@@ -1,0 +1,7 @@
+{
+  "name": "scrapling",
+  "description": "This agent specializes in gathering information from the internet and providing concise summaries.",
+  "instructions": "Agent for scraping and summarizing web content.",
+  "is_premade": false,
+  "created_at": "2026-05-28T03:15:14.000Z"
+}
