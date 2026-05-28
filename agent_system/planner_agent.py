@@ -235,6 +235,15 @@ async def create_planner_agent() -> Agent:
 async def run_planner(task: str, max_turns: int = 25) -> str:
     agent = await create_planner_agent()
     print(f"  ⚙ Planner thinking...")
-    result = await Runner.run(agent, task, max_turns=max_turns)
-    print(f"  ⚙ Planner finished")
-    return result.final_output
+    result = Runner.run_streamed(agent, task, max_turns=max_turns)
+    chunks = []
+    async for event in result.stream_events():
+        if event.type == "raw_response_event" and hasattr(event.data, "delta"):
+            delta = event.data.delta
+            if delta:
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        elif event.type == "agent_updated_stream_event":
+            print(f"\n  ⚙ → {event.new_agent.name} speaking...\n", flush=True)
+    print(f"\n  ⚙ Planner finished")
+    return "".join(chunks)

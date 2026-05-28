@@ -211,6 +211,15 @@ async def create_reviewer_agent() -> Agent:
 async def run_reviewer(task: str, max_turns: int = 20) -> str:
     agent = await create_reviewer_agent()
     print(f"  ⚙ Reviewer thinking...")
-    result = await Runner.run(agent, task, max_turns=max_turns)
-    print(f"  ⚙ Reviewer finished")
-    return result.final_output
+    result = Runner.run_streamed(agent, task, max_turns=max_turns)
+    chunks = []
+    async for event in result.stream_events():
+        if event.type == "raw_response_event" and hasattr(event.data, "delta"):
+            delta = event.data.delta
+            if delta:
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        elif event.type == "agent_updated_stream_event":
+            print(f"\n  ⚙ → {event.new_agent.name} speaking...\n", flush=True)
+    print(f"\n  ⚙ Reviewer finished")
+    return "".join(chunks)
