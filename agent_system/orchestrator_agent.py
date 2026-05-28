@@ -1,6 +1,5 @@
 """Orchestrator — self-governing loop: planner → reviewer → replanner → reviewer → ... until all goals met."""
 import os
-import sys
 import re
 import json
 import uuid
@@ -8,12 +7,10 @@ from datetime import datetime
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
-from .opnbrain import save_conversation, publish_concept, search_brain
-from .registry import list_agents, get_agent
+from .opnbrain import save_conversation
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("ORCHESTRATOR_MODEL", os.environ.get("OLLAMA_MODEL", "planner-model"))
-SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", os.environ.get("OLLAMA_MODEL", "summarizer-model"))
 OUTPUT_DIR = os.environ.get("AGENT_OUTPUT_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "sessions"))
 TEMP_DIR = os.path.join(os.path.dirname(OUTPUT_DIR), "temp")
 PLANNER_STORE = os.path.join(os.path.dirname(OUTPUT_DIR), "planner_store")
@@ -24,10 +21,6 @@ os.makedirs(PLANNER_STORE, exist_ok=True)
 def _brain_save(title: str, content: str, tags: list[str] | None = None):
     save_conversation(title=title, model=OLLAMA_MODEL, tags=tags or [],
                       is_chat=False, prompt="", response=content)
-
-
-def _brain_search(query: str) -> str:
-    return search_brain(query)
 
 
 def _temp_save(key: str, content: str):
@@ -94,24 +87,17 @@ def _parse_severity(review: str) -> tuple[str, str]:
     Looks for **SEVERITY: <type>** first. Falls back to keyword scanning
     if no structured marker is found.
     """
-    lines = review.split("\n")
-    verdict_line = ""
-    found_marker = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("**SEVERITY:"):
-            verdict_line = stripped
-            found_marker = True
+    marker = re.search(r"\*\*SEVERITY:\s*([^*\n]+)\*\*", review, re.IGNORECASE)
 
-    if found_marker:
-        upper_verdict = verdict_line.upper()
-        if "SEVERITY: ALL MET" in upper_verdict:
+    if marker:
+        upper_verdict = marker.group(1).strip().upper()
+        if "ALL MET" in upper_verdict or "NONE" in upper_verdict:
             return ("ALL MET", review)
-        if "SEVERITY: FAKE DATA" in upper_verdict:
+        if "FAKE DATA" in upper_verdict:
             severity = "FAKE DATA"
-        elif "SEVERITY: TANGENT" in upper_verdict:
+        elif "TANGENT" in upper_verdict:
             severity = "TANGENT"
-        elif "SEVERITY: MISSING" in upper_verdict:
+        elif "MISSING" in upper_verdict:
             severity = "MISSING"
         else:
             severity = "MISSING"
@@ -219,12 +205,25 @@ async def run_orchestrator(goal: str, max_iterations: int = 5) -> str:
                 "Verify any URLs with verify_links. Report real results only."
             )
 
+
+        # If previous review failed, add explicit reviewer feedback and instruct planner to be more thorough
+        reviewer_feedback = ""
+        if iteration > 1 and severity != "ALL MET":
+            reviewer_feedback = (
+                f"\n\n---\n\n"
+                f"# REVIEWER FEEDBACK (Iteration {iteration-1})\n"
+                f"The last review found the plan or execution was NOT thorough enough.\n"
+                f"Verdict: {severity}\n"
+                f"Details: {detail}\n"
+                f"\nYou MUST be more thorough in your research, tool use, and data gathering. Address every missing or incomplete point above. Do not skip steps. Provide concrete, raw data for each subgoal.\n"
+            )
         plan_prompt = (
             plan_prompt_base + "\n\n"
             f"GOAL:\n{current_goal}\n\n"
             f"Prior context from previous iterations:\n{prior_context if prior_context else 'None yet'}\n"
             f"Recent plans and reviews:\n"
             + ("\n---\n".join(all_plans[-2:] + all_reviews[-2:]) if all_plans else "None yet")
+            + reviewer_feedback
         )
 
         plan_result = await run_planner(plan_prompt)
@@ -263,6 +262,9 @@ async def run_orchestrator(goal: str, max_iterations: int = 5) -> str:
             print(f"\n{'='*60}")
             print(f"  ✅ ALL GOALS MET — {iteration} iteration(s)")
             print(f"{'='*60}")
+            # Print the final synthesis (main research report) to stdout
+            if plan_result:
+                print(f"\n===== FINAL REPORT =====\n{plan_result}\n=======================\n")
             final = (
                 f"## Complete\n\n**Goal:** {goal}\n**Iterations:** {iteration}\n\n"
                 f"### Plans & Execution\n" + "\n---\n".join(all_plans) + "\n\n"

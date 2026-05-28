@@ -1,9 +1,12 @@
 """CLI entrypoint for the general research agent."""
 import asyncio
+import os
 import sys
 from agents import Runner
 from agents.mcp import MCPServerStdio
 from .agent import create_agent, research_topic
+
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 
 
 async def interactive():
@@ -11,6 +14,7 @@ async def interactive():
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent(scrapling_server=scrapling)
         print(f"Research Agent ready (Scrapling + Google Trends)\n")

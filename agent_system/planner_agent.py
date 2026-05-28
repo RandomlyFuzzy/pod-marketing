@@ -1,6 +1,5 @@
 """Planner agent — mini-orchestrator that decomposes goals and executes sub-tasks via delegation."""
 import os
-import sys
 import json
 from datetime import datetime
 
@@ -12,7 +11,7 @@ from agents.mcp import MCPServerStdio
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 
 from .opnbrain import save_conversation, publish_concept, search_brain
-from .registry import create_agent, get_agent, list_agents, delete_agent
+from .registry import create_agent, get_agent, list_agents, team_manifest
 
 try:
     import httpx
@@ -25,6 +24,7 @@ except ImportError:
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("OLLAMA_MODEL", "planner-model"))
 PLANNER_STORE = os.environ.get("PLANNER_STORE", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "planner_store"))
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 os.makedirs(PLANNER_STORE, exist_ok=True)
 
 
@@ -126,15 +126,14 @@ async def brain_search(query: str) -> str:
 
 @function_tool
 async def list_agent_types() -> str:
-    """List all registered agent types."""
-    agents = list_agents()
-    if not agents:
-        return "No agent types registered."
-    lines = ["Registered Agent Types:"]
-    for a in agents:
-        premade = "(premade)" if a.get("is_premade") else ""
-        lines.append(f"- {a['name']} {premade}: {a.get('description', '')}")
-    return "\n".join(lines)
+    """List all registered agent types, models, and effective tools."""
+    return team_manifest()
+
+
+@function_tool
+async def get_team_manifest() -> str:
+    """Return every registered agent with its model, function tools, and MCP tools."""
+    return team_manifest()
 
 
 @function_tool
@@ -187,7 +186,15 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
     """
     from .base import create_agent_from_definition
 
+    # Always use 'researcher' agent for research/web data tasks if the requested agent is not found or is not suitable
     definition = get_agent(agent_type)
+    fallback_to_researcher = False
+    if not definition:
+        # If the requested agent is not found and the task is research-like, fallback to 'researcher'
+        if any(kw in task.lower() for kw in ["search", "find", "current", "web", "temperature", "ip address", "weather", "news", "lookup", "data", "information"]):
+            definition = get_agent("researcher")
+            fallback_to_researcher = True
+    # If still not found, error out
     if not definition:
         types = [a["name"] for a in list_agents()]
         return f"Agent type '{agent_type}' not found. Available: {', '.join(types)}"
@@ -196,11 +203,15 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent_from_definition(
             definition=definition,
             extra_mcp_servers=[scrapling],
         )
+        # If we fell back to researcher, clarify in the task
+        if fallback_to_researcher:
+            task = f"[FALLBACK: researcher agent used for web data access] {task}"
         result = await Runner.run(agent, task, max_turns=12)
         return result.final_output
 
@@ -239,13 +250,31 @@ async def create_planner_agent() -> Agent:
     model = OpenAIChatCompletionsModel(model=OLLAMA_MODEL, openai_client=client)
     set_default_openai_key("ollama")
 
+    manifest = team_manifest()
+
     return Agent(
         name="PlannerAgent",
         instructions=(
             "You are a Planner agent — a mini-orchestrator. "
             "Your job: decompose goals into sequential steps, execute each step, "
             "persist results, and output ACTUAL RAW DATA.\n\n"
+            "## TEAM MANIFEST\n"
+            f"{manifest}\n\n"
             "## EXECUTION RULES\n"
+            "1. Before delegating, choose an agent from the TEAM MANIFEST by name.\n"
+            "2. For simple memory lookups: call brain_search() directly.\n"
+            "3. For current web data: delegate to researcher, scourer, competitive_analyst, or market_validator.\n"
+            "4. For platform/POD work: delegate to listing_optimizer, margin_analyst, production_advisor, or product_strategist.\n"
+            "5. For code work: delegate to architect, code_writer, debugger, tester, or code_reviewer.\n"
+            "6. After each result: call store_result(key, <raw returned data>).\n"
+            "7. Before next step: call load_result(key) to get prior data.\n"
+            "8. INCLUDE prior data verbatim in the next step's task.\n"
+            "9. At end: call store_context(\"iteration_N\", summary).\n\n"
+            "Do not invent agent names. If no listed agent fits, call create_agent_type first.\n\n"
+            "## TOOL USE REQUIREMENT\n"
+            "If the goal asks you to execute work, you must call at least one relevant tool before final output. "
+            "A written plan without tool results is a failed response.\n\n"
+            "## DIRECT TOOL RULES\n"
             "1. For simple lookups: call brain_search() directly (it's a function tool)\n"
             "2. For complex sub-tasks: call delegate_to_agent(agent_type, task)\n"
             "3. After each result: call store_result(key, <raw returned data>)\n"
@@ -273,7 +302,8 @@ async def create_planner_agent() -> Agent:
             "- store_context(key) / load_context(key)\n"
             "- brain_track_concept(name) / brain_save_note(title, content, tags)\n"
             "- create_plan(title, phases)\n"
-            "- list_agent_types() / create_agent_type(name, instructions, description)\n\n"
+            "- list_agent_types() / get_team_manifest()\n"
+            "- create_agent_type(name, instructions, description)\n\n"
             "Delegation tools (use ONLY for complex sub-tasks):\n"
             "- delegate_to_agent(agent_type, task) — run a specialized sub-agent\n\n"
             "## RULES\n"
@@ -285,6 +315,7 @@ async def create_planner_agent() -> Agent:
         model=model,
         tools=[
             list_agent_types,
+            get_team_manifest,
             create_agent_type,
             delegate_to_agent,
             store_result,
@@ -311,11 +342,24 @@ def _is_function_call(delta: str) -> bool:
     return False
 
 
+def _requires_tool_use(task: str) -> bool:
+    markers = [
+        "delegate_to_agent",
+        "store_result",
+        "raw data",
+        "execute each step",
+        "current web data",
+    ]
+    lowered = task.lower()
+    return any(marker in lowered for marker in markers)
+
+
 async def run_planner(task: str, max_turns: int = 25) -> str:
     agent = await create_planner_agent()
     print(f"  ⚙ Planner thinking...")
     result = Runner.run_streamed(agent, task, max_turns=max_turns)
     chunks = []
+    tool_calls = 0
     async for event in result.stream_events():
         if event.type == "raw_response_event" and hasattr(event.data, "delta"):
             delta = event.data.delta
@@ -324,5 +368,16 @@ async def run_planner(task: str, max_turns: int = 25) -> str:
                 chunks.append(delta)
         elif event.type == "agent_updated_stream_event":
             print(f"\n  ⚙ → {event.new_agent.name} speaking...\n", flush=True)
+        elif event.type == "run_item_stream_event" and event.name == "tool_called":
+            tool_calls += 1
     print(f"\n  ⚙ Planner finished")
-    return "".join(chunks)
+    final_output = result.final_output if result.final_output is not None else "".join(chunks)
+    if _requires_tool_use(task) and tool_calls == 0:
+        warning = (
+            "\n\n=== EXECUTION FAILURE ===\n"
+            "Planner completed without making any tool calls. This indicates the active local "
+            "model did not follow the tool-calling contract for an execution task."
+        )
+        print(warning)
+        final_output = f"{final_output}{warning}"
+    return str(final_output)

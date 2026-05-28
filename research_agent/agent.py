@@ -12,6 +12,7 @@ from .tools.google_trends import google_trends_check, google_trends_compare
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 
 
 @function_tool
@@ -52,6 +53,7 @@ async def create_scrapling_server():
             "args": ["mcp"],
         },
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     )
     await server.connect()
     return server
@@ -108,6 +110,7 @@ async def research_topic(topic: str, instructions: str = "", max_turns: int = 15
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent(
             instructions=instructions or f"Research this topic thoroughly: {topic}",

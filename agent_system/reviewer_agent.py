@@ -1,6 +1,5 @@
 """Reviewer agent — quality gate with 3 severity verdicts: missing, tangent, or fake data."""
 import os
-import sys
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
@@ -22,6 +21,7 @@ except ImportError:
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("REVIEWER_MODEL", os.environ.get("OLLAMA_MODEL", "reviewer-model"))
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 
 
 @function_tool
@@ -110,6 +110,7 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent_from_definition(
             definition=definition,
@@ -252,4 +253,5 @@ async def run_reviewer(task: str, max_turns: int = 20) -> str:
         elif event.type == "agent_updated_stream_event":
             print(f"\n  ⚙ → {event.new_agent.name} speaking...\n", flush=True)
     print(f"\n  ⚙ Reviewer finished")
-    return "".join(chunks)
+    final_output = result.final_output if result.final_output is not None else "".join(chunks)
+    return str(final_output)

@@ -16,14 +16,17 @@ from agent_system.registry import (
     create_agent,
     update_agent,
     delete_agent,
+    team_manifest,
     CORE_MCP_SERVERS,
     CORE_TOOLS,
+    MCP_TOOL_DESCRIPTIONS,
 )
 from agent_system.base import create_agent_from_definition
 from agents import Runner
 from agents.mcp import MCPServerStdio
 
 server = Server("agent-manager")
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 
 
 @server.list_tools()
@@ -31,7 +34,7 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="list_agent_types",
-            description="List all registered agent types",
+            description="List all registered agent types, models, and effective tools",
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
@@ -105,14 +108,7 @@ async def handle_list_tools() -> list[Tool]:
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "list_agent_types":
-        agents = list_agents()
-        if not agents:
-            return [TextContent(type="text", text="No agent types registered.")]
-        lines = ["## Registered Agent Types\n"]
-        for a in agents:
-            premade = " (premade)" if a.get("is_premade") else ""
-            lines.append(f"- **{a['name']}**{premade}: {a.get('description', '')}")
-        return [TextContent(type="text", text="\n".join(lines))]
+        return [TextContent(type="text", text=team_manifest())]
 
     elif name == "get_agent_definition":
         agent = get_agent(arguments["name"])
@@ -148,12 +144,16 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Deleted: {ok}")]
 
     elif name == "get_core_info":
+        mcp_tools = []
+        for server_name in CORE_MCP_SERVERS:
+            mcp_tools.extend(MCP_TOOL_DESCRIPTIONS.get(server_name, []))
         return [TextContent(
             type="text",
             text=(
                 "## Immutable Core\n\n"
                 f"**MCP Servers:** {', '.join(CORE_MCP_SERVERS)}\n"
                 f"**Tools:** {', '.join(CORE_TOOLS)}\n\n"
+                f"**MCP Tools:** {', '.join(sorted(set(mcp_tools)))}\n\n"
                 "These cannot be modified through the management interface."
             ),
         )]
@@ -182,6 +182,7 @@ async def _run_delegated(definition: dict, task: str) -> str:
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent_from_definition(
             definition=definition,

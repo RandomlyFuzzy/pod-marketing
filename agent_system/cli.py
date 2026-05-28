@@ -1,81 +1,31 @@
 #!/usr/bin/env python
-"""CLI entrypoint for the agent system."""
+"""CLI entrypoint for the agent system.
+
+All execution goes through the orchestrator. Planner, reviewer, and specialist
+agents remain internal components used by the orchestrator/delegation layer.
+"""
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents import Runner
-from agents.mcp import MCPServerStdio
+
+async def list_agents() -> None:
+    from agent_system.registry import team_manifest
+
+    print(team_manifest())
 
 
-async def run_general(agent_type: str):
-    from agent_system.registry import get_agent
-    from agent_system.base import create_agent_from_definition
-
-    definition = get_agent(agent_type)
-    if not definition:
-        print(f"Agent type '{agent_type}' not found. Available:")
-        from agent_system.registry import list_agents
-        for a in list_agents():
-            print(f"  - {a['name']}: {a.get('description', '')}")
-        return
-
-    async with MCPServerStdio(
-        name="Scrapling",
-        params={"command": "scrapling", "args": ["mcp"]},
-        cache_tools_list=True,
-    ) as scrapling:
-        agent = await create_agent_from_definition(
-            definition=definition,
-            extra_mcp_servers=[scrapling],
-        )
-        print(f" {agent_type} agent ready  (Scrapling + Trends + opnbrain)\n")
-        try:
-            while True:
-                prompt = input(">>> ").strip()
-                if not prompt:
-                    continue
-                if prompt.lower() in ("quit", "exit", "q"):
-                    break
-                result = await Runner.run(agent, prompt, max_turns=12)
-                print(f"\n{result.final_output}\n")
-        except KeyboardInterrupt:
-            print()
-
-
-async def single_general(agent_type: str, task: str):
-    from agent_system.registry import get_agent
-    from agent_system.base import create_agent_from_definition
-
-    definition = get_agent(agent_type)
-    if not definition:
-        print(f"Agent type '{agent_type}' not found.")
-        return
-
-    async with MCPServerStdio(
-        name="Scrapling",
-        params={"command": "scrapling", "args": ["mcp"]},
-        cache_tools_list=True,
-    ) as scrapling:
-        agent = await create_agent_from_definition(
-            definition=definition,
-            extra_mcp_servers=[scrapling],
-        )
-        result = await Runner.run(agent, task, max_turns=12)
-        print(result.final_output)
-
-
-async def single_orchestrator(task: str):
+async def run_goal(goal: str) -> None:
     from agent_system.orchestrator_agent import run_orchestrator
-    result = await run_orchestrator(task)
+
+    result = await run_orchestrator(goal)
     print(result)
 
 
-async def interactive_orchestrator():
-    from agent_system.orchestrator_agent import run_orchestrator
-    print(" Orchestrator Agent  (manages agent registry + delegates)\n")
+async def interactive_orchestrator() -> None:
+    print(" Orchestrator Agent  (all work is routed through planner, agents, reviewer)\n")
     try:
         while True:
             prompt = input(">>> ").strip()
@@ -83,135 +33,69 @@ async def interactive_orchestrator():
                 continue
             if prompt.lower() in ("quit", "exit", "q"):
                 break
-            result = await run_orchestrator(prompt)
-            print(f"\n{result}\n")
+            await run_goal(prompt)
     except KeyboardInterrupt:
         print()
 
 
-async def single_planner(task: str):
-    from agent_system.planner_agent import run_planner
-    result = await run_planner(task)
-    print(result)
+def _compat_goal(mode: str, args: list[str]) -> str | None:
+    """Translate old direct-agent CLI shapes into orchestrator goals."""
+    if mode in ("list", "ls"):
+        return None
+
+    if mode in ("orchestrator", "o"):
+        return " ".join(args).strip()
+
+    if mode in ("planner", "p"):
+        task = " ".join(args).strip()
+        return task or ""
+
+    if mode in ("reviewer", "r"):
+        task = " ".join(args).strip()
+        return f"Review this through the normal orchestrator quality loop: {task}" if task else ""
+
+    if mode in ("general", "g"):
+        if not args:
+            return ""
+        agent_type = args[0]
+        task = " ".join(args[1:]).strip()
+        if task:
+            return f"Use the orchestrator and delegate to `{agent_type}` if appropriate: {task}"
+        return f"Start an orchestrated session using `{agent_type}` as the likely specialist."
+
+    from agent_system.registry import get_agent
+
+    task = " ".join(args).strip()
+    if get_agent(mode):
+        if task:
+            return f"Use the orchestrator and delegate to `{mode}` if appropriate: {task}"
+        return f"Start an orchestrated session using `{mode}` as the likely specialist."
+
+    return " ".join([mode] + args).strip()
 
 
-async def interactive_planner():
-    from agent_system.planner_agent import run_planner
-    print(" Planner Agent  (creates subagents + delegates + tracks progress)\n")
-    try:
-        while True:
-            prompt = input(">>> ").strip()
-            if not prompt:
-                continue
-            if prompt.lower() in ("quit", "exit", "q"):
-                break
-            result = await run_planner(prompt)
-            print(f"\n{result}\n")
-    except KeyboardInterrupt:
-        print()
-
-
-async def single_reviewer(task: str):
-    from agent_system.reviewer_agent import run_reviewer
-    result = await run_reviewer(task)
-    print(result)
-
-
-async def interactive_reviewer():
-    from agent_system.reviewer_agent import run_reviewer
-    print(" Reviewer Agent  (reviews work + creates subagents + produces feedback)\n")
-    try:
-        while True:
-            prompt = input(">>> ").strip()
-            if not prompt:
-                continue
-            if prompt.lower() in ("quit", "exit", "q"):
-                break
-            result = await run_reviewer(prompt)
-            print(f"\n{result}\n")
-    except KeyboardInterrupt:
-        print()
-
-
-async def list_agents():
-    from agent_system.registry import list_agents
-    agents = list_agents()
-    if not agents:
-        print("No agent types registered.")
-        return
-    print("Registered Agent Types:")
-    for a in agents:
-        premade = " (premade)" if a.get("is_premade") else ""
-        print(f"  {a['name']}{premade}: {a.get('description', '')}")
-
-
-def main():
+def main() -> None:
     import argparse
+
     parser = argparse.ArgumentParser(description="Agent System CLI")
     parser.add_argument(
-        "mode", nargs="?", default="list",
-        choices=["list", "general", "orchestrator", "planner", "reviewer", "g", "o", "p", "r",
-                 "researcher", "scourer", "coder", "idea_generator", "product_producer", "email_reader",
-                 "architect", "channel_strategist", "competitive_analyst", "copywriter", "creative_director",
-                 "design_spec_agent", "debugger", "tester", "product_strategist", "marketing_strategist",
-                 "social_media_creator", "email_automator", "mockup_generator", "margin_analyst",
-                 "market_validator", "production_advisor", "customer"],
-        help="list=show agents, general=run agent, orchestrator=run orchestrator, planner=run planner, reviewer=run reviewer",
+        "mode",
+        nargs="?",
+        default="list",
+        help="list=show agents, orchestrator [goal]=run the orchestrator. Legacy direct-agent modes are routed through the orchestrator.",
     )
-    parser.add_argument("args", nargs="*", help="agent_type query... for general, or query for orchestrator")
+    parser.add_argument("args", nargs="*", help="goal text")
     args = parser.parse_args()
 
-    mode = args.mode
-    if mode == "g":
-        mode = "general"
-    elif mode == "o":
-        mode = "orchestrator"
-    elif mode == "p":
-        mode = "planner"
-    elif mode == "r":
-        mode = "reviewer"
-
-    if mode == "list":
+    goal = _compat_goal(args.mode, args.args)
+    if goal is None:
         asyncio.run(list_agents())
         return
 
-    if mode == "orchestrator":
-        query = " ".join(args.args) if args.args else None
-        if query:
-            asyncio.run(single_orchestrator(query))
-        else:
-            asyncio.run(interactive_orchestrator())
-        return
-
-    if mode == "planner":
-        query = " ".join(args.args) if args.args else None
-        if query:
-            asyncio.run(single_planner(query))
-        else:
-            asyncio.run(interactive_planner())
-        return
-
-    if mode == "reviewer":
-        query = " ".join(args.args) if args.args else None
-        if query:
-            asyncio.run(single_reviewer(query))
-        else:
-            asyncio.run(interactive_reviewer())
-        return
-
-    if mode == "general":
-        if not args.args:
-            print("Usage: start-agent.sh general <agent_type> [query...]")
-            print("       start-agent.sh general research 'your topic'")
-            print("       start-agent.sh general coder 'write a function'")
-            return
-        agent_type = args.args[0]
-        query = " ".join(args.args[1:]) if len(args.args) > 1 else None
-        if query:
-            asyncio.run(single_general(agent_type, query))
-        else:
-            asyncio.run(run_general(agent_type))
-        return
+    if goal:
+        asyncio.run(run_goal(goal))
+    else:
+        asyncio.run(interactive_orchestrator())
 
 
 if __name__ == "__main__":

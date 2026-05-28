@@ -1,6 +1,5 @@
 """Base agent factory — creates OpenAI Agents SDK Agent instances from definitions."""
 import os
-import sys
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
@@ -15,11 +14,12 @@ from .opnbrain import (
     publish_summary,
     search_brain,
 )
-from .registry import resolve_instructions, get_agent, list_agents, create_agent
+from .registry import resolve_instructions, get_agent, list_agents, create_agent, team_manifest
 from research_agent.tools.google_trends import google_trends_check, google_trends_compare
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
+SCRAPLING_MCP_TIMEOUT = float(os.environ.get("SCRAPLING_MCP_TIMEOUT", "30"))
 
 # ── Immutable core function tools ────────────────────────────────────
 
@@ -145,6 +145,7 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
         name="Scrapling",
         params={"command": "scrapling", "args": ["mcp"]},
         cache_tools_list=True,
+        client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
     ) as scrapling:
         agent = await create_agent_from_definition(
             definition=definition,
@@ -207,25 +208,30 @@ async def create_agent_from_definition(
     model = OpenAIChatCompletionsModel(model=model_name, openai_client=client)
     set_default_openai_key("ollama")
 
-    # Handle MCP servers - use definition if provided, otherwise use extra_mcp_servers or default to scrapling
-    if "mcp_servers" in definition:
-        mcp_servers = []
-        for server_name in definition["mcp_servers"]:
-            if server_name == "scrapling":
-                mcp_servers.append(MCPServerStdio(
+    # Handle MCP servers. Prefer an already-open server from the caller; otherwise
+    # create the requested registry server with a longer timeout for cold starts.
+    mcp_servers = []
+    requested_mcp_servers = definition.get("mcp_servers", ["scrapling"])
+    extra_servers = list(extra_mcp_servers or [])
+    for server_name in requested_mcp_servers:
+        if server_name == "scrapling":
+            if extra_servers:
+                mcp_servers.extend(extra_servers)
+                extra_servers = []
+            else:
+                scrapling = MCPServerStdio(
                     name="Scrapling",
                     params={"command": "scrapling", "args": ["mcp"]},
                     cache_tools_list=True,
-                ))
-            # Add other MCP servers here as needed
-            # elif server_name == "some_other_server":
-            #     mcp_servers.append(MCPServerStdio(...))
-    else:
-        mcp_servers = list(extra_mcp_servers or [])
+                    client_session_timeout_seconds=SCRAPLING_MCP_TIMEOUT,
+                )
+                await scrapling.connect()
+                mcp_servers.append(scrapling)
 
-    # Handle function tools - use definition if provided, otherwise use core tools
-    if "tools" in definition:
-        # Map tool names to actual function objects
+
+    # Dynamically aggregate all unique tools from all agent definitions for planner
+    if definition["name"] == "planner":
+        from .registry import list_agents
         tool_map = {
             "check_trends": check_trends,
             "validate_with_trends": validate_with_trends,
@@ -236,14 +242,45 @@ async def create_agent_from_definition(
             "brain_search": brain_search,
             "brain_publish_summary": brain_publish_summary,
         }
-        tools = [tool_map[tool_name] for tool_name in definition["tools"] if tool_name in tool_map]
-        # If no valid tools specified, fall back to core tools
+        all_tools = set(definition.get("tools", []))
+        for agent_def in list_agents():
+            for t in agent_def.get("tools", []):
+                all_tools.add(t)
+        # Always include delegate_to_agent
+        all_tools.add("delegate_to_agent")
+        tools = [tool_map[t] for t in all_tools if t in tool_map]
         if not tools:
             tools = list(CORE_FUNCTION_TOOLS)
+        instructions = resolve_instructions(definition)
+        instructions += (
+            "\n\n## TEAM MANIFEST\n"
+            f"{team_manifest()}\n\n"
+            "Use this manifest as the source of truth for available teams, agent names, models, "
+            "function tools, and MCP tools. Do not invent agent names. For specialized work, "
+            "delegate to the exact agent name from the manifest with delegate_to_agent(agent_type, task)."
+        )
     else:
-        tools = list(CORE_FUNCTION_TOOLS)
+        if "tools" in definition:
+            tool_map = {
+                "check_trends": check_trends,
+                "validate_with_trends": validate_with_trends,
+                "delegate_to_agent": delegate_to_agent,
+                "create_agent_type": create_agent_type,
+                "brain_save_note": brain_save_note,
+                "brain_track_concept": brain_track_concept,
+                "brain_search": brain_search,
+                "brain_publish_summary": brain_publish_summary,
+            }
+            tools = [tool_map[tool_name] for tool_name in definition["tools"] if tool_name in tool_map]
+            if not tools:
+                tools = list(CORE_FUNCTION_TOOLS)
+        else:
+            tools = list(CORE_FUNCTION_TOOLS)
 
-    instructions = resolve_instructions(definition)
+
+    # If planner, instructions already updated above
+    if definition["name"] != "planner":
+        instructions = resolve_instructions(definition)
 
     return Agent(
         name=f"{definition['name']}Agent",
