@@ -1,6 +1,8 @@
-"""Planner agent — plans complex work, creates subagents, delegates, and tracks progress."""
+"""Planner agent — mini-orchestrator that decomposes goals and executes sub-tasks via delegation."""
 import os
 import sys
+import json
+from datetime import datetime
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
@@ -12,9 +14,92 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from .opnbrain import save_conversation, publish_concept, search_brain
 from .registry import create_agent, get_agent, list_agents, delete_agent
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
+    import urllib.request
+    import urllib.error
 
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("PLANNER_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+PLANNER_STORE = os.environ.get("PLANNER_STORE", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "planner_store"))
+os.makedirs(PLANNER_STORE, exist_ok=True)
+
+
+# ── Persistent result storage between delegation steps ──
+
+@function_tool
+async def store_result(key: str, content: str) -> str:
+    """Save a step result for use by later steps.
+    
+    After calling delegate_to_agent, call this to persist the result
+    so the next step can retrieve it.
+    
+    Args:
+        key: Unique identifier like "step_1", "step_2"
+        content: The raw output from delegate_to_agent
+    """
+    path = os.path.join(PLANNER_STORE, f"{key}.json")
+    with open(path, "w") as f:
+        json.dump({"key": key, "content": content, "timestamp": datetime.now().isoformat()}, f)
+    return f"Stored: {key} ({len(content)} chars)"
+
+
+@function_tool
+async def load_result(key: str) -> str:
+    """Load a previously stored step result.
+    
+    Call this when building the task for the next step to include
+    prior results as context.
+    
+    Args:
+        key: The key used in store_result
+    """
+    path = os.path.join(PLANNER_STORE, f"{key}.json")
+    if not os.path.exists(path):
+        return f"No stored result for: {key}"
+    with open(path) as f:
+        return json.load(f)["content"]
+
+
+@function_tool
+async def list_results() -> str:
+    """List all available stored results."""
+    files = [f.replace(".json", "") for f in os.listdir(PLANNER_STORE) if f.endswith(".json")]
+    return "\n".join(sorted(files)) if files else "No stored results."
+
+
+@function_tool
+async def store_context(key: str, summary: str) -> str:
+    """Save a context summary for the next orchestrator iteration.
+    
+    Args:
+        key: Identifier like "iteration_1_summary"
+        summary: What was learned, what's still needed
+    """
+    path = os.path.join(PLANNER_STORE, f"ctx_{key}.json")
+    with open(path, "w") as f:
+        json.dump({"key": key, "summary": summary, "timestamp": datetime.now().isoformat()}, f)
+    return f"Context saved: {key}"
+
+
+@function_tool
+async def load_context(key: str) -> str:
+    """Load a context summary from a previous iteration.
+    
+    Args:
+        key: Identifier like "iteration_1_summary"
+    """
+    path = os.path.join(PLANNER_STORE, f"ctx_{key}.json")
+    if not os.path.exists(path):
+        return f"No context for: {key}"
+    with open(path) as f:
+        return json.load(f)["summary"]
+
+
+# ── Other tools ──
 
 @function_tool
 async def brain_save_note(title: str, content: str, tags: list[str] | str | None = None) -> str:
@@ -54,16 +139,7 @@ async def list_agent_types() -> str:
 
 @function_tool
 async def create_agent_type(name: str, instructions: str, description: str = "") -> str:
-    """Create a new agent type in the registry.
-    
-    The new agent will automatically have access to Scrapling web tools,
-    Google Trends, and brain memory tools.
-    
-    Args:
-        name: Unique name for the new agent type
-        instructions: System instructions defining the agent's behavior and workflow
-        description: Brief description of what the agent does
-    """
+    """Create a new agent type in the registry."""
     try:
         agent = create_agent(name=name, instructions=instructions,
                              description=description, is_premade=False)
@@ -73,14 +149,41 @@ async def create_agent_type(name: str, instructions: str, description: str = "")
 
 
 @function_tool
+async def verify_links(urls: str) -> str:
+    """Check whether URLs are real (not hallucinated)."""
+    import re
+    items = re.split(r"[\n,]+", urls)
+    items = [u.strip() for u in items if u.strip()]
+    if not items:
+        return "No URLs provided."
+    results = []
+    for url in items:
+        try:
+            if HAS_HTTPX:
+                resp = await httpx.AsyncClient(timeout=10).head(url, follow_redirects=True)
+                ok = "✅" if resp.status_code < 400 else "❌"
+                size = f" ({len(resp.content)} bytes)" if resp.status_code < 400 else ""
+                results.append(f"{ok} {url} → HTTP {resp.status_code}{size}")
+            else:
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    ok = "✅" if resp.status < 400 else "❌"
+                    results.append(f"{ok} {url} → HTTP {resp.status}")
+        except Exception as e:
+            results.append(f"❌ {url} → ERROR: {e}")
+    return "Link Verification:\n" + "\n".join(results)
+
+
+@function_tool
 async def delegate_to_agent(agent_type: str, task: str) -> str:
-    """Create and run a specialized agent with a task.
+    """RUN a specialized agent with a task.
     
     The agent gets Scrapling, Google Trends, and brain tools automatically.
+    After calling this, use store_result(key, result) to persist the output.
     
     Args:
-        agent_type: The type of agent to run (can be pre-made or custom-created)
-        task: Clear task description for the agent
+        agent_type: The type of agent to run (pre-made or custom)
+        task: Clear task description. Include prior results by calling load_result(key) first.
     """
     from .base import create_agent_from_definition
 
@@ -104,12 +207,7 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
 
 @function_tool
 async def create_plan(title: str, phases: str) -> str:
-    """Create and save a multi-phase plan to the brain.
-    
-    Args:
-        title: Plan title
-        phases: Newline-separated phase definitions. Each line: "Phase N | Name | AgentType | Goal" 
-    """
+    """Create and save a multi-phase plan to the brain."""
     lines = [f"# Plan: {title}\n"]
     for i, line in enumerate(phases.strip().split("\n"), 1):
         parts = [p.strip() for p in line.split("|")]
@@ -144,92 +242,73 @@ async def create_planner_agent() -> Agent:
     return Agent(
         name="PlannerAgent",
         instructions=(
-            "You are a Planner agent — a hierarchical decomposition specialist. "
-            "Your ONLY job is to break goals into step-by-step dependency chains and DELEGATE each step. "
-            "You NEVER do research, write code, or produce content yourself. You decompose and delegate.\n\n"
-            "## DECOMPOSITION METHOD: \"TO DO A, I NEED B AND C\"\n"
-            "You break goals down like this:\n"
-            "  \"To achieve the goal, I first need X. To get X, I need Y and Z. "
-            "Z is complex, so to get Z I need Q, R, and S...\"\n\n"
-            "Work backwards from the goal. Ask: what MUST exist before this step? "
-            "Build a dependency tree where each node is one atomic agent call.\n\n"
-            "## EXAMPLE\n"
-            "Goal: \"Create a product listing for a custom beach bag\"\n"
-            "  Step 1: Research trending beach bag styles, materials, and price points (agent: research)\n"
-            "  Step 2: Check Google Trends for beach bag demand validation (agent: research)\n"
-            "  Step 3: Analyze competitors and find differentiation angles (agent: research)\n"
-            "    Step 3a (if needed): Scrape top 5 competitor listings for keywords (agent: scourer)\n"
-            "    Step 3b: Compile competitor analysis report (agent: create_agent_type → delegate)\n"
-            "  Step 4: Write product title, description, tags using research data (agent: product_producer)\n"
-            "  Step 5: Set pricing based on competitor data + cost analysis (agent: product_producer)\n\n"
-            "## YOUR WORKFLOW\n"
-            "1. Call `brain_search` for prior context\n"
-            "2. Call `list_agent_types` to see available agents\n"
-            "3. Build the dependency chain: \"To do A, I need B. To do B, I need C and D...\"\n"
-            "4. Flatten the tree into a numbered execution order (dependencies first)\n"
-            "5. For each step that needs a specialist no existing agent covers, call "
-            "`create_agent_type` with precise instructions, then delegate to it\n"
-            "6. Execute steps IN ORDER by calling `delegate_to_agent` for each one\n"
-            "7. Pass context between steps (include prior results in the next task description)\n"
-            "8. After ALL steps execute, synthesize everything\n\n"
-                        "## OUTPUT FORMAT — MUST BE A REPRODUCIBLE RUNBOOK\n"
-            "Your output must be so detailed that a human could re-run every step manually. Include:\n\n"
-            "  **DECOMPOSITION REASONING:**\n"
-            "  To do [goal], I need:\n"
-            "    → Step 1: [name] (agent: [type]) — because [why this must come first]\n"
-            "    → Step 2: [name] (agent: [type]) — because [dependency rationale]\n"
-            "      → Step 2a: [sub-step] — because step 2 is complex, it needs...\n"
-            "    → Step 3: ...\n\n"
-            "  **EXECUTION LOG:**\n"
-            "  --- Step 1: [name] ---\n"
-            "  Agent: [type]\n"
-            "  Full Prompt Sent:\n"
-            "  ```\n"
-            "  [EXACT task string passed to delegate_to_agent]\n"
-            "  ```\n"
-            "  Result Received:\n"
-            "  ```\n"
-            "  [EXACT output from agent]\n"
-            "  ```\n"
-            "  --- Step 2: [name] ---\n"
-            "  Agent: [type]\n"
-            "  Full Prompt Sent:\n"
-            "  ```\n"
-            "  ...\n"
-            "  ```\n"
-            "  Result Received:\n"
-            "  ```\n"
-            "  ...\n"
-            "  ```\n\n"
-            "  **SYNTHESIS:**\n"
-            "  [Combined results and what they mean for the overall goal]\n\n"
+            "You are a Planner agent — a mini-orchestrator. "
+            "Your job: decompose goals into sequential steps, execute each step, "
+            "persist results, and output ACTUAL RAW DATA.\n\n"
+            "## EXECUTION RULES\n"
+            "1. For simple lookups: call brain_search() directly (it's a function tool)\n"
+            "2. For complex sub-tasks: call delegate_to_agent(agent_type, task)\n"
+            "3. After each result: call store_result(key, <raw returned data>)\n"
+            "4. Before next step: call load_result(key) to get prior data\n"
+            "5. INCLUDE prior data verbatim in the next step's task\n"
+            "6. At end: call store_context(\"iteration_N\", summary)\n\n"
+            "## FALLBACK CHAIN\n"
+            "If a step returns error/empty:\n"
+            "  Try: different agent type → create_agent_type → brain_search\n"
+            "  3 attempts max, then report specific failure.\n\n"
+            "## OUTPUT FORMAT — RAW DATA ONLY\n"
+            "  === DATA FROM STEP 1 ===\n"
+            "  [RAW tool output — verbatim, not summarized]\n"
+            "  === DATA FROM STEP 2 ===\n"
+            "  [RAW tool output]\n"
+            "  === SYNTHESIS ===\n"
+            "  [your analysis]\n\n"
+            "NO process descriptions. NO plans. NO intentions. OUTPUT RAW DATA.\n"
+            "NO markdown code fences around DATA sections.\n\n"
             "## TOOLS\n"
-            "- `list_agent_types()` — see what agents exist\n"
-            "- `create_agent_type(name, instructions, description)` — make a custom sub-agent\n"
-            "- `delegate_to_agent(agent_type, task)` — RUN a sub-agent (MUST call for every step)\n"
-            "- `create_plan(title, phases)` — save plan (\"StepName | AgentType | Task\" per line)\n"
-            "- `brain_search(query)` — search memory\n"
-            "- `brain_track_concept(name)` — track concepts\n"
-            "- `brain_save_note(title, content, tags)` — save notes\n\n"
-            "## CRITICAL RULES\n"
-            "- Every step must start with \"To do X, I need Y\" reasoning\n"
-            "- If a step is complex, decompose it into sub-steps before executing\n"
-            "- You MUST call `delegate_to_agent` for EVERY leaf step — no exceptions\n"
-            "- The task description must include ALL prior context the agent needs\n"
-            "- Pass results from earlier steps as context to later steps\n"
-            "- Use named params: delegate_to_agent(agent_type=\"research\", task=\"...\")"
+            "Direct call tools (call directly):\n"
+            "- brain_search(query) — search memory\n"
+            "- verify_links(urls) — check if URLs are real\n"
+            "- store_result(key, content) / load_result(key) / list_results()\n"
+            "- store_context(key) / load_context(key)\n"
+            "- brain_track_concept(name) / brain_save_note(title, content, tags)\n"
+            "- create_plan(title, phases)\n"
+            "- list_agent_types() / create_agent_type(name, instructions, description)\n\n"
+            "Delegation tools (use ONLY for complex sub-tasks):\n"
+            "- delegate_to_agent(agent_type, task) — run a specialized sub-agent\n\n"
+            "## RULES\n"
+            "- Prefer direct tools when possible (brain_search, verify_links)\n"
+            "- Use delegate_to_agent ONLY for steps needing external research/scraping/analysis\n"
+            "- store_result + load_result after every tool call\n"
+            "- FINAL OUTPUT: raw data only, no thinking/planning narrative"
         ),
         model=model,
         tools=[
             list_agent_types,
             create_agent_type,
             delegate_to_agent,
+            store_result,
+            load_result,
+            list_results,
+            store_context,
+            load_context,
+            verify_links,
             create_plan,
             brain_search,
             brain_track_concept,
             brain_save_note,
         ],
     )
+
+
+def _is_function_call(delta: str) -> bool:
+    """Check if a text delta is a JSON function call (not user-visible)."""
+    stripped = delta.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return True
+    if stripped.startswith('{"') and ('":"' in stripped or '":' in stripped):
+        return True
+    return False
 
 
 async def run_planner(task: str, max_turns: int = 25) -> str:
@@ -240,7 +319,7 @@ async def run_planner(task: str, max_turns: int = 25) -> str:
     async for event in result.stream_events():
         if event.type == "raw_response_event" and hasattr(event.data, "delta"):
             delta = event.data.delta
-            if delta:
+            if delta and not _is_function_call(delta):
                 print(delta, end="", flush=True)
                 chunks.append(delta)
         elif event.type == "agent_updated_stream_event":

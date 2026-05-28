@@ -1,0 +1,7 @@
+{
+  "name": "researcher",
+  "description": "The researcher agent will be used to gather, analyze, and summarize information from various sources.",
+  "instructions": "Agent type for conducting research and analysis.",
+  "is_premade": false,
+  "created_at": "2026-05-28T03:06:07.000Z"
+}

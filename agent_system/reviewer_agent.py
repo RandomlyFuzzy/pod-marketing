@@ -1,4 +1,4 @@
-"""Reviewer agent — reviews work products, checks quality criteria, creates review subagents."""
+"""Reviewer agent — quality gate with 3 severity verdicts: missing, tangent, or fake data."""
 import os
 import sys
 
@@ -12,8 +12,16 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from .opnbrain import save_conversation, publish_concept, publish_summary, search_brain
 from .registry import create_agent, get_agent, list_agents
 
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
+    import urllib.request
+    import urllib.error
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b-128k")
+OLLAMA_MODEL = os.environ.get("REVIEWER_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
 
 
 @function_tool
@@ -112,6 +120,38 @@ async def delegate_to_agent(agent_type: str, task: str) -> str:
 
 
 @function_tool
+async def verify_links(urls: str) -> str:
+    """Check whether URLs are real (not hallucinated).
+    
+    Makes HEAD/GET requests to each URL and reports which resolve.
+    
+    Args:
+        urls: Newline-separated or comma-separated list of URLs to check
+    """
+    import re
+    items = re.split(r"[\n,]+", urls)
+    items = [u.strip() for u in items if u.strip()]
+    if not items:
+        return "No URLs provided."
+    results = []
+    for url in items:
+        try:
+            if HAS_HTTPX:
+                resp = await httpx.AsyncClient(timeout=10).head(url, follow_redirects=True)
+                ok = "✅" if resp.status_code < 400 else "❌"
+                size = f" ({len(resp.content)} bytes)" if resp.status_code < 400 else ""
+                results.append(f"{ok} {url} → HTTP {resp.status_code}{size}")
+            else:
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    ok = "✅" if resp.status < 400 else "❌"
+                    results.append(f"{ok} {url} → HTTP {resp.status}")
+        except Exception as e:
+            results.append(f"❌ {url} → ERROR: {e}")
+    return "Link Verification:\n" + "\n".join(results)
+
+
+@function_tool
 async def create_review(title: str, subject: str, criteria: list[str]) -> str:
     """Create and save a structured review template to the brain.
     
@@ -147,65 +187,55 @@ async def create_reviewer_agent() -> Agent:
     return Agent(
         name="ReviewerAgent",
         instructions=(
-"You are a Reviewer agent — the quality gate in a self-governing system. "
-            "Your ONLY job is to meticulously compare RESULTS against GOALS and determine: "
-            "is EVERY requirement satisfied? If not, what EXACTLY is still missing?\n\n"
-            "## THOROUGH REVIEW PROCESS\n"
-            "1. Parse the GOAL into individual requirements (list each one explicitly)\n"
-            "2. Parse the RESULTS — what was actually produced?\n"
-            "3. For EACH requirement, ask: is this fully satisfied?\n"
-            "   ✅ MET = the result completely satisfies this requirement\n"
-            "   ❌ MISSING = the result does NOT fully satisfy this requirement\n"
-            "4. Look for HIDDEN gaps — things the goal implied but weren't done:\n"
-            "   - If goal says \"research and create a listing\", both research AND creation must be done\n"
-            "   - If goal says \"validate with trends\", trend data must actually be present\n"
-            "   - If goal says \"create 5 options\", count them — 4 is a gap\n"
-            "5. If a specialized check is needed (SEO, accuracy, format compliance), "
-            "call `create_agent_type` to make a focused review subagent, then `delegate_to_agent`\n\n"
-            "## YOUR OUTPUT — MUST BE A REPRODUCIBLE AUDIT REPORT\n"
-            "Your output must be detailed enough that a human could independently verify each finding:\n\n"
-            "  **GOAL REQUIREMENTS PARSED:**\n"
-            "  1. [requirement 1]\n"
-            "  2. [requirement 2]\n"
-            "  ...\n\n"
-            "  **CRITERIA CHECKED:**\n"
-            "  ✅ [criterion 1] — MET\n"
-            "     Evidence: [exact quote or data point proving this is done]\n"
-            "  ❌ [criterion 2] — MISSING\n"
-            "     Evidence: [what was expected vs what was actually produced]\n"
-            "  ...\n\n"
-            "  **VERDICT:**\n"
-            "  **ALL GOALS MET**  OR  **REMAINING GAPS:**\n"
-            "  1. [specific gap 1]\n"
-            "  2. [specific gap 2]\n"
-            "## TOOLS\n"
-            "- `list_agent_types()` — see available agents\n"
-            "- `create_agent_type(name, instructions, description)` — create a review subagent\n"
-            "- `delegate_to_agent(agent_type, task)` — run a subagent for focused review\n"
-            "- `create_review(title, subject, criteria)` — save a review template\n"
-            "- `brain_search(query)` — search memory\n"
-            "- `brain_track_concept(name)` — track concepts\n"
-            "- `brain_save_note(title, content, tags)` — save review report\n"
-            "- `brain_publish_summary(name, content, tags)` — publish reference summary\n\n"
+            "You are a Reviewer agent — the strict quality gate. You ONLY review results against a goal."
+            " You NEVER delegate, create agents, or do research."
+            " Your sole job is to compare RESULTS against GOAL and output a VERDICT.\n\n"
+            "## VERDICT FORMAT\n"
+            "Your final output MUST contain exactly one of these on its own line:\n"
+            "    **SEVERITY: ALL MET**\n"
+            "    **SEVERITY: MISSING**\n"
+            "    **SEVERITY: TANGENT**\n"
+            "    **SEVERITY: FAKE DATA**\n\n"
+            "### ALL MET (success)\n"
+            "Use when: Every requirement is fully satisfied with real, verifiable results.\n"
+            "Output: **SEVERITY: ALL MET** and **ALL GOALS MET**\n\n"
+            "### MISSING (incomplete)\n"
+            "Use when: On-topic but incomplete. Some requirements unmet.\n"
+            "Output: **SEVERITY: MISSING** then **REMAINING GAPS:** with numbered list.\n\n"
+            "### TANGENT (off-topic)\n"
+            "Use when: Output doesn't address the stated goal.\n"
+            "Output: **SEVERITY: TANGENT** then **ORIGINAL GOAL:** restated.\n\n"
+            "### FAKE DATA (fabricated)\n"
+            "Use when: Results are simulated/fabricated instead of real tool execution.\n"
+            "Call `verify_links` on any URLs to check if claims are real.\n"
+            "Output: **SEVERITY: FAKE DATA** then **EVIDENCE:** describing what was fabricated.\n\n"
             "## RULES\n"
-            "- Be STRICT and PEDANTIC — partial completion is NOT completion\n"
-            "- Every gap must be specific: \"SEO title missing\" not \"could be better\"\n"
-            "- If you're not sure about a goal, mark it MISSING — it's safer\n"
-            "- Save every review to the brain for audit trail\n"
-            "- Use named params: create_agent_type(name=\"...\", instructions=\"...\")"
+            "- Do NOT call delegate_to_agent — you have no such tool\n"
+            "- Do NOT create agents or list agents — you have no such tool\n"
+            "- MORE DATA IS BETTER. Extra findings beyond the requested count are fine.\n"
+            "- Minor formatting or phrasing differences are NOT gaps.\n"
+            "- Only flag a MISSING if the GOAL was substantively unmet (e.g., no real data, wrong topic entirely).\n"
+            "- If you suspect fake data, use verify_links to check URLs\n"
+            "- Your output MUST contain the **SEVERITY:** line — this is how the orchestrator parses your verdict"
         ),
         model=model,
         tools=[
-            list_agent_types,
-            create_agent_type,
-            delegate_to_agent,
-            create_review,
+            verify_links,
             brain_search,
             brain_track_concept,
             brain_save_note,
             brain_publish_summary,
         ],
     )
+
+
+def _is_function_call(delta: str) -> bool:
+    stripped = delta.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return True
+    if stripped.startswith('{"') and ('":"' in stripped or '":' in stripped):
+        return True
+    return False
 
 
 async def run_reviewer(task: str, max_turns: int = 20) -> str:
@@ -216,7 +246,7 @@ async def run_reviewer(task: str, max_turns: int = 20) -> str:
     async for event in result.stream_events():
         if event.type == "raw_response_event" and hasattr(event.data, "delta"):
             delta = event.data.delta
-            if delta:
+            if delta and not _is_function_call(delta):
                 print(delta, end="", flush=True)
                 chunks.append(delta)
         elif event.type == "agent_updated_stream_event":

@@ -107,6 +107,8 @@ def save_conversation(
     is_chat: bool = True,
 ) -> str:
     _ensure_dirs()
+    date_dir = CONVERSATIONS_DIR / date.today().isoformat()
+    date_dir.mkdir(parents=True, exist_ok=True)
     tags = tags or []
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
 
