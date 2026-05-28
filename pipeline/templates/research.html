@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phase-hero">
+    <div class="phase-icon">🔍</div>
+    <h2>Phase 1: Market Research</h2>
+    <p>Research any topic, market, or niche — AI-powered web research with structured analysis.</p>
+</div>
+
+<!-- Research Input -->
+<div class="card">
+    <h2>🎯 What do you want to research?</h2>
+    <label for="topic-input">Topic / Market / Niche</label>
+    <input id="topic-input" type="text" placeholder="e.g. Personalized kids gifts, golf accessories, pet apparel, coastal home decor..." value="{{ state.niche or state.topic or '' }}">
+    <label for="keywords-input" class="mt-2">Keywords for deeper search (comma separated, optional)</label>
+    <input id="keywords-input" type="text" placeholder="keyword1, keyword2, ...">
+    <label for="context-input" class="mt-2">Additional context (optional)</label>
+    <textarea id="context-input" rows="2" placeholder="e.g. I want to sell on Etsy, targeting moms age 28-42, budget under $30"></textarea>
+    <div class="flex gap-2 mt-2 flex-wrap">
+        <button class="btn btn-primary" onclick="runResearch()">🔍 Research</button>
+        <button class="btn btn-secondary" onclick="runAgentResearch()">🤖 Deep Research (AI Agent)</button>
+    </div>
+    <div id="research-loading" class="hidden mt-2"><span class="spinner"></span> Researching... (this may take 30-60s)</div>
+</div>
+
+<!-- Research Angles -->
+<div class="card">
+    <h2>📋 Research Angles</h2>
+    <p class="text-sm text-muted mb-2">Choose a specific angle to focus the research, or run your own prompt above:</p>
+    <div class="flex gap-2 flex-wrap">
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(0)">Market Trends</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(1)">Competitor Analysis</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(2)">Customer Research</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(3)">Product Ideation</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(4)">SEO & Keywords</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(5)">Pricing Strategy</button>
+        <button class="btn btn-secondary btn-sm" onclick="researchAngle(6)">Full Market Report</button>
+    </div>
+</div>
+
+<!-- Results -->
+<div id="research-result" class="card hidden">
+    <div class="flex justify-between items-center">
+        <h2>📊 Research Results</h2>
+        <span class="badge badge-green" id="research-status">Complete</span>
+    </div>
+    <div id="research-content" class="result-box mt-2"></div>
+</div>
+
+<!-- Agent Research Results -->
+<div id="agent-result" class="card hidden">
+    <h2>🤖 Deep Research Report</h2>
+    <div id="agent-content" class="result-box mt-2"></div>
+</div>
+
+<!-- Navigation -->
+<div class="flex justify-between mt-4">
+    <a href="/" class="btn btn-secondary">← Back</a>
+    <a href="/phase/validate" class="btn btn-primary">Next: Validate →</a>
+</div>
+
+<script>
+const angles = [
+    "What are the current trends and opportunities in this market? Include growth signals, emerging sub-niches, and demand indicators.",
+    "Who are the top competitors in this space? What are their strategies, price points, and weaknesses? How can a new entrant differentiate?",
+    "Who is the target customer? What are their demographics, psychographics, pain points, and buying behavior? What channels reach them?",
+    "What specific products could be created for this topic? Include product types, design themes, price points, and unique selling propositions.",
+    "What are the best keywords and search phrases for this topic? Include high-volume, long-tail, and low-competition opportunities.",
+    "What pricing strategy works for this market? Include price ranges, perceived value tactics, bundling opportunities, and platform-specific pricing (Etsy vs eBay).",
+    "Produce a comprehensive market research report covering all aspects: trends, competition, customers, products, keywords, pricing, and actionable recommendations.",
+];
+
+async function runResearch() {
+    const topic = document.getElementById('topic-input').value.trim();
+    if (!topic) { alert('Enter a topic first'); return; }
+    const kw = document.getElementById('keywords-input').value.split(',').map(s => s.trim()).filter(Boolean);
+    const ctx = document.getElementById('context-input').value.trim();
+    showLoading('research-loading');
+    document.getElementById('research-result').classList.add('hidden');
+    document.getElementById('agent-result').classList.add('hidden');
+    const data = await apiPost('/api/research', { niche: topic, keywords: kw.length ? kw : undefined, context: ctx });
+    hideLoading('research-loading');
+    document.getElementById('research-result').classList.remove('hidden');
+    document.getElementById('research-content').textContent = data.research || 'No results';
+}
+
+async function runAgentResearch() {
+    const topic = document.getElementById('topic-input').value.trim();
+    if (!topic) { alert('Enter a topic first'); return; }
+    showLoading('research-loading');
+    document.getElementById('agent-result').classList.add('hidden');
+    document.getElementById('research-result').classList.add('hidden');
+    const data = await apiPost('/api/agent-research', { niche: topic, query: angles[6].replace('this market', '"' + topic + '"').replace('this topic', '"' + topic + '"') });
+    hideLoading('research-loading');
+    document.getElementById('agent-result').classList.remove('hidden');
+    document.getElementById('agent-content').textContent = data.research || 'No results';
+}
+
+async function researchAngle(idx) {
+    const topic = document.getElementById('topic-input').value.trim();
+    if (!topic) { alert('Enter a topic first'); return; }
+    showLoading('research-loading');
+    document.getElementById('research-result').classList.add('hidden');
+    document.getElementById('agent-result').classList.add('hidden');
+    const query = angles[idx].replace('this market', '"' + topic + '"').replace('this space', '"' + topic + '"').replace('this topic', '"' + topic + '"').replace('this field', '"' + topic + '"');
+    const data = await apiPost('/api/agent-research', { niche: topic, query });
+    hideLoading('research-loading');
+    document.getElementById('agent-result').classList.remove('hidden');
+    document.getElementById('agent-content').textContent = data.research || 'No results';
+}
+</script>
+{% endblock %}

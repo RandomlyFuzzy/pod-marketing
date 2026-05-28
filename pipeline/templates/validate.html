@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phase-hero">
+    <div class="phase-icon">✅</div>
+    <h2>Phase 2: Validate</h2>
+    <p>Check profitability, market demand, and competition before committing to a product.</p>
+</div>
+
+<div class="card">
+    <h2>📝 Product Validation</h2>
+    <div class="grid-2">
+        <div>
+            <label for="product-idea">Product / Idea to Validate</label>
+            <textarea id="product-idea" placeholder="Describe what you want to validate... A custom beach tote bag, a pet grooming subscription, a new SaaS tool, a coffee shop concept">{{ state.validation_data.product_idea or state.topic or '' }}</textarea>
+        </div>
+        <div>
+            <label for="product-type">Category (for benchmark comparison, optional)</label>
+            <input id="product-type" list="product-types" placeholder="e.g. T-Shirt, Tote Bag, Mug, Poster" value="">
+            <datalist id="product-types">
+                <option value="T-Shirt"><option value="Tote Bag"><option value="Mug">
+                <option value="Trucker Hat"><option value="Poster"><option value="Canvas Print">
+                <option value="Beach Towel"><option value="Phone Case"><option value="Tumbler">
+                <option value="Apparel"><option value="Accessory"><option value="Home Decor">
+            </datalist>
+            <label class="mt-2" for="retail-price">Target Price ($)</label>
+            <input id="retail-price" type="number" step="0.01" value="24.99">
+            <label class="mt-2" for="platform-select">Platform</label>
+            <select id="platform-select">
+                <option value="etsy">Etsy</option>
+                <option value="ebay">eBay</option>
+                <option value="general">General / Other</option>
+            </select>
+        </div>
+    </div>
+    <button class="btn btn-primary mt-2" onclick="runValidation()">✅ Validate Product</button>
+    <div id="validate-loading" class="hidden mt-2"><span class="spinner"></span> Validating... (AI analyzing market fit)</div>
+</div>
+
+<div id="validate-result" class="hidden">
+    <!-- AI Validation -->
+    <div class="card">
+        <h2>🤖 AI Market Validation</h2>
+        <div id="ai-validation" class="result-box"></div>
+    </div>
+
+    <!-- Benchmark -->
+    <div id="benchmark-card" class="card hidden">
+        <h2>📊 Profitability Benchmark</h2>
+        <div id="benchmark-content"></div>
+    </div>
+
+    <!-- Quick Profit Calculator -->
+    <div class="card">
+        <h2>🧮 Quick Profit Calculator</h2>
+        <div class="grid-3 text-sm">
+            <div><label>Base Cost ($)</label><input id="calc-cost" type="number" step="0.01" value="10.00"></div>
+            <div><label>Retail Price ($)</label><input id="calc-retail" type="number" step="0.01" value="24.99"></div>
+            <div><label>Platform</label><select id="calc-platform"><option value="etsy">Etsy (11% fees)</option><option value="ebay">eBay (14% fees)</option></select></div>
+        </div>
+        <button class="btn btn-secondary btn-sm mt-2" onclick="calcProfit()">Calculate</button>
+        <div id="calc-result" class="mt-2"></div>
+    </div>
+</div>
+
+<div class="flex justify-between mt-4">
+    <a href="/phase/research" class="btn btn-secondary">← Research</a>
+    <a href="/phase/create" class="btn btn-primary">Next: Create →</a>
+</div>
+
+<script>
+async function runValidation() {
+    const data = {
+        product_idea: document.getElementById('product-idea').value,
+        product_type: document.getElementById('product-type').value,
+        retail_price: parseFloat(document.getElementById('retail-price').value) || 24.99,
+        platform: document.getElementById('platform-select').value,
+        niche: '{{ state.niche }}' || document.getElementById('product-idea').value.slice(0, 50),
+    };
+    showLoading('validate-loading');
+    document.getElementById('validate-result').classList.add('hidden');
+    const result = await apiPost('/api/validate', data);
+    hideLoading('validate-loading');
+
+    document.getElementById('validate-result').classList.remove('hidden');
+
+    if (result.ai_validation) {
+        document.getElementById('ai-validation').textContent = result.ai_validation;
+    }
+
+    if (result.benchmark_validation && !result.benchmark_validation.error) {
+        const b = result.benchmark_validation;
+        document.getElementById('benchmark-card').classList.remove('hidden');
+        document.getElementById('benchmark-content').innerHTML = `
+            <p><strong>Product:</strong> ${b.product}</p>
+            <p><strong>Your Price:</strong> $${b.your_price.toFixed(2)} | <strong>Benchmark:</strong> $${b.benchmark_price.toFixed(2)}</p>
+            <p><strong>Net Profit:</strong> $${b.profitability.net_profit.toFixed(2)} | <strong>Margin:</strong> ${b.profitability.margin_pct}%</p>
+            <p><strong>Verdict:</strong> <span class="badge ${b.verdict === 'GOOD' ? 'badge-green' : b.verdict === 'REVIEW' ? 'badge-yellow' : 'badge-red'}">${b.verdict}</span></p>
+            <p class="text-sm text-muted">${b.recommendation}</p>
+            <div class="${b.verdict === 'GOOD' ? 'verdict-good' : b.verdict === 'REVIEW' ? 'verdict-review' : 'verdict-poor'} mt-2"></div>
+        `;
+    } else if (result.benchmark_validation && result.benchmark_validation.error) {
+        document.getElementById('benchmark-card').classList.remove('hidden');
+        document.getElementById('benchmark-content').innerHTML = `<p class="text-muted">${result.benchmark_validation.error}</p>`;
+    }
+}
+
+function calcProfit() {
+    const cost = parseFloat(document.getElementById('calc-cost').value) || 0;
+    const retail = parseFloat(document.getElementById('calc-retail').value) || 0;
+    const platform = document.getElementById('calc-platform').value.includes('etsy') ? 'etsy' : 'ebay';
+    const feeRate = platform === 'etsy' ? 0.11 : 0.14;
+    const shipping = platform === 'etsy' ? 5.00 : 4.50;
+    const fees = (retail * feeRate).toFixed(2);
+    const net = (retail - cost - parseFloat(fees) - shipping).toFixed(2);
+    const margin = retail > 0 ? ((net / retail) * 100).toFixed(1) : 0;
+    document.getElementById('calc-result').innerHTML = `
+        <div class="result-box" style="max-height:200px">
+            Retail: $${retail.toFixed(2)} | Cost: $${cost.toFixed(2)} | Fees: $${fees} | Shipping: $${shipping.toFixed(2)}
+            <br><strong>Net Profit: $${net}</strong> | <strong>Margin: ${margin}%</strong>
+            <span class="badge ${margin >= 25 ? 'badge-green' : margin >= 15 ? 'badge-yellow' : 'badge-red'}">${margin >= 25 ? 'Good' : margin >= 15 ? 'Okay' : 'Thin'}</span>
+        </div>
+    `;
+}
+</script>
+{% endblock %}

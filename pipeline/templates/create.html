@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phase-hero">
+    <div class="phase-icon">🎨</div>
+    <h2>Phase 3: Create Listing</h2>
+    <p>Generate SEO-optimized titles, descriptions, tags, and design briefs for any product.</p>
+</div>
+
+<div class="card">
+    <h2>📝 Listing Details</h2>
+    <div class="grid-2">
+        <div>
+            <label for="product-name">Product Name</label>
+            <input id="product-name" type="text" placeholder="e.g. Personalized Beach Tote Bag" value="{{ state.current_product or '' }}">
+        </div>
+        <div>
+            <label for="topic-input">Market / Topic</label>
+            <input id="topic-input" type="text" placeholder="e.g. Beach accessories, pet gifts, golf apparel" value="{{ state.topic or '' }}">
+        </div>
+    </div>
+    <label for="persona-input">Target Audience / Persona</label>
+    <input id="persona-input" type="text" placeholder="e.g. Moms planning family vacation (28-42, mid-high income, Etsy shoppers)" value="Vacation Mom">
+    <label class="mt-2" for="features-input">Features (one per line)</label>
+    <textarea id="features-input" rows="4">Premium quality materials
+Vibrant, fade-resistant print
+Machine washable
+Available in multiple sizes
+Makes a perfect gift</textarea>
+    <button class="btn btn-primary mt-2" onclick="runCreate()">🎨 Generate Listing</button>
+    <div id="create-loading" class="hidden mt-2"><span class="spinner"></span> Generating listing content...</div>
+</div>
+
+<div id="create-result" class="hidden">
+    <div class="card">
+        <h2>📋 Generated Listing</h2>
+        <div id="listing-content" class="result-box"></div>
+    </div>
+
+    <!-- Design Brief -->
+    <div class="card">
+        <h2>🎯 Design Brief</h2>
+        <div class="flex gap-2 mb-2 flex-wrap">
+            <input id="style-keywords" type="text" placeholder="Style keywords (e.g. minimalist, coastal, modern)" style="flex:1" value="modern, clean, trendy">
+            <button class="btn btn-secondary btn-sm" onclick="runDesignBrief()">Generate Design Brief</button>
+        </div>
+        <div id="brief-loading" class="hidden"><span class="spinner"></span> Generating design brief...</div>
+        <div id="brief-content" class="result-box mt-2 hidden"></div>
+    </div>
+</div>
+
+<div class="flex justify-between mt-4">
+    <a href="/phase/validate" class="btn btn-secondary">← Validate</a>
+    <a href="/phase/publish" class="btn btn-primary">Next: Publish →</a>
+</div>
+
+<script>
+async function runCreate() {
+    const name = document.getElementById('product-name').value.trim();
+    if (!name) { alert('Enter a product name'); return; }
+    const features = document.getElementById('features-input').value.split('\n').filter(Boolean);
+    const data = {
+        product_name: name,
+        niche: document.getElementById('topic-input').value.trim() || '{{ state.topic }}' || 'general',
+        persona: document.getElementById('persona-input').value.trim(),
+        features: features,
+    };
+    showLoading('create-loading');
+    document.getElementById('create-result').classList.add('hidden');
+    const result = await apiPost('/api/create', data);
+    hideLoading('create-loading');
+    document.getElementById('create-result').classList.remove('hidden');
+    document.getElementById('listing-content').innerHTML = formatListing(result.listing || result);
+}
+
+async function runDesignBrief() {
+    const name = document.getElementById('product-name').value.trim();
+    if (!name) { alert('Enter a product name first'); return; }
+    const kw = document.getElementById('style-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
+    showLoading('brief-loading');
+    document.getElementById('brief-content').classList.add('hidden');
+    const result = await apiPost('/api/create/design-brief', {
+        product_name: name,
+        niche: document.getElementById('topic-input').value.trim() || 'general',
+        persona: document.getElementById('persona-input').value.trim(),
+        style_keywords: kw,
+    });
+    hideLoading('brief-loading');
+    document.getElementById('brief-content').classList.remove('hidden');
+    document.getElementById('brief-content').textContent = result.design_brief || 'No result';
+}
+
+function formatListing(l) {
+    if (typeof l === 'string') return l;
+    let html = '';
+    if (l.title) html += `<h3>Title</h3><p>${l.title}</p>`;
+    if (l.description) html += `<h3>Description</h3><p>${l.description.replace(/\n/g, '<br>')}</p>`;
+    if (l.price_point) html += `<h3>Price Point</h3><p>$${l.price_point}</p>`;
+    if (l.tags) html += `<h3>Tags</h3><p>${l.tags.join(', ')}</p>`;
+    if (l.key_features) html += `<h3>Key Features</h3><ul>${l.key_features.map(f => `<li>${f}</li>`).join('')}</ul>`;
+    if (l.seo_keywords) html += `<h3>SEO Keywords</h3><p>${l.seo_keywords.join(', ')}</p>`;
+    return html;
+}
+</script>
+{% endblock %}

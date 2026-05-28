@@ -3,3 +3,4 @@ mcp_server/.env
 __pycache__/
 *.pyc
 .DS_Store
+pipeline/.pipeline_data/

@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phase-hero">
+    <div class="phase-icon">🚀</div>
+    <h2>Phase 4: Publish</h2>
+    <p>Create products on Printify and prepare your Etsy/eBay listings.</p>
+</div>
+
+<div class="card">
+    <h2>📦 Product Setup</h2>
+    <div class="grid-2">
+        <div>
+            <label for="pub-product-name">Product Name</label>
+            <input id="pub-product-name" value="{{ state.current_product or '' }}" placeholder="Product name">
+        </div>
+        <div>
+            <label for="pub-product-type">Product Type</label>
+            <select id="pub-product-type">
+                <option value="t-shirt">T-Shirt</option>
+                <option value="tote bag">Tote Bag</option>
+                <option value="mug">Mug</option>
+                <option value="poster">Poster</option>
+                <option value="canvas">Canvas Print</option>
+                <option value="hat">Trucker Hat</option>
+                <option value="beach towel">Beach Towel</option>
+                <option value="phone case">Phone Case</option>
+                <option value="tumbler">Tumbler</option>
+            </select>
+        </div>
+    </div>
+    <div class="grid-2 mt-2">
+        <div>
+            <label for="pub-platform">Platform</label>
+            <select id="pub-platform">
+                <option value="etsy">Etsy</option>
+                <option value="ebay">eBay</option>
+            </select>
+        </div>
+        <div>
+            <label>&nbsp;</label>
+            <button class="btn btn-primary" onclick="runPublishPrep()" style="width:100%">🔍 Check Availability & Pricing</button>
+        </div>
+    </div>
+    <div id="publish-loading" class="hidden mt-2"><span class="spinner"></span> Checking Printify catalog and pricing...</div>
+</div>
+
+<div id="publish-result" class="hidden">
+    <!-- API Status -->
+    <div id="api-status-card" class="card hidden">
+        <h2>🔐 API Connection Status</h2>
+        <div id="api-status-content" class="mt-2"></div>
+    </div>
+
+    <!-- Blueprint Results -->
+    <div id="blueprint-card" class="card hidden">
+        <h2>🏭 Available Printify Blueprints</h2>
+        <div id="blueprint-content" class="result-box mt-2"></div>
+    </div>
+
+    <!-- Listing Draft -->
+    <div id="listing-draft-card" class="card hidden">
+        <h2>📝 Listing Draft</h2>
+        <div id="listing-draft-content" class="result-box mt-2"></div>
+    </div>
+</div>
+
+<!-- Final Summary -->
+<div class="card mt-4">
+    <h2>📋 Pipeline Summary</h2>
+    <div class="grid-3 text-sm text-muted">
+        <div>
+            <strong>🔍 Research</strong>
+            <p id="summary-research" class="mt-2">{{ state.niche or 'Not started' }}</p>
+        </div>
+        <div>
+            <strong>✅ Validate</strong>
+            <p id="summary-validate" class="mt-2">{{ state.validation_data.product_idea[:50] if state.validation_data else 'Not started' }}</p>
+        </div>
+        <div>
+            <strong>🎨 Create</strong>
+            <p id="summary-create" class="mt-2">{{ state.current_product or 'Not started' }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="flex justify-between mt-4">
+    <a href="/phase/create" class="btn btn-secondary">← Create</a>
+    <a href="/" class="btn btn-success">🏁 Pipeline Complete — Back to Start</a>
+</div>
+
+<script>
+async function runPublishPrep() {
+    const name = document.getElementById('pub-product-name').value.trim();
+    if (!name) { alert('Enter a product name'); return; }
+    const data = {
+        product_name: name,
+        product_type: document.getElementById('pub-product-type').value,
+        platform: document.getElementById('pub-platform').value,
+        listing_content: {},
+    };
+    showLoading('publish-loading');
+    document.getElementById('publish-result').classList.add('hidden');
+    const result = await apiPost('/api/publish', data);
+    hideLoading('publish-loading');
+
+    document.getElementById('publish-result').classList.remove('hidden');
+
+    // API Status
+    document.getElementById('api-status-card').classList.remove('hidden');
+    let apiHtml = '<div class="flex gap-2 flex-wrap">';
+    for (const [key, val] of Object.entries(result.requires_api_keys)) {
+        const ok = val;
+        apiHtml += `<span class="badge ${ok ? 'badge-green' : 'badge-red'}">${key}: ${ok ? '✅ Connected' : '❌ Missing API key'}</span>`;
+    }
+    apiHtml += '</div>';
+    document.getElementById('api-status-content').innerHTML = apiHtml;
+
+    // Blueprints
+    if (result.available_blueprints && result.available_blueprints.length) {
+        document.getElementById('blueprint-card').classList.remove('hidden');
+        let bpHtml = '';
+        for (const bp of result.available_blueprints) {
+            bpHtml += `<h3>${bp.product_type} (ID: ${bp.blueprint_id})</h3>`;
+            for (const prov of bp.providers || []) {
+                bpHtml += `<p><strong>${prov.provider}</strong> (${prov.location})</p>`;
+                for (const v of prov.variants || []) {
+                    bpHtml += `<p class="text-sm" style="margin-left:16px">- ${v.title}: $${v.cost.toFixed(2)}</p>`;
+                }
+            }
+        }
+        document.getElementById('blueprint-content').innerHTML = bpHtml;
+    }
+
+    // Listing Draft
+    if (result.listing_draft) {
+        document.getElementById('listing-draft-card').classList.remove('hidden');
+        const d = result.listing_draft;
+        document.getElementById('listing-draft-content').innerHTML = `
+            <p><strong>Title:</strong> ${d.title || 'N/A'}</p>
+            <p><strong>Price:</strong> $${d.price || 'N/A'}</p>
+            <p><strong>Quantity:</strong> ${d.quantity || d.quantity === 0 ? d.quantity : 'N/A'}</p>
+            <p><strong>Personalizable:</strong> ${d.is_personalizable ? 'Yes' : 'No'}</p>
+            <p><strong>Tags:</strong> ${(d.tags || []).join(', ')}</p>
+            <p><strong>Description Preview:</strong><br>${(d.description || 'N/A').slice(0, 300)}...</p>
+        `;
+    }
+}
+</script>
+{% endblock %}

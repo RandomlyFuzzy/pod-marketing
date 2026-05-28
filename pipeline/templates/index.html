@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phase-hero">
+    <div class="phase-icon">🧪</div>
+    <h2>POD Product Pipeline</h2>
+    <p>From market research to published product — an automated workflow for print-on-demand selling.</p>
+    <div class="progress-bar" style="max-width:400px;margin:24px auto">
+        <div class="progress-fill" style="width:0%"></div>
+    </div>
+</div>
+
+<div class="grid-3">
+    <a href="/phase/research" style="text-decoration:none">
+        <div class="card" style="cursor:pointer;transition:all .2s" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor=''">
+            <div style="font-size:2rem;margin-bottom:8px">🔍</div>
+            <h3>1. Research</h3>
+            <p class="text-sm text-muted">Discover trending niches, analyze competitors, find product opportunities using AI-powered web research.</p>
+        </div>
+    </a>
+    <a href="/phase/validate" style="text-decoration:none">
+        <div class="card" style="cursor:pointer;transition:all .2s" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor=''">
+            <div style="font-size:2rem;margin-bottom:8px">✅</div>
+            <h3>2. Validate</h3>
+            <p class="text-sm text-muted">Check profitability, market demand, and competition. Get a go/no-go verdict with data.</p>
+        </div>
+    </a>
+    <a href="/phase/create" style="text-decoration:none">
+        <div class="card" style="cursor:pointer;transition:all .2s" onmouseover="this.style.borderColor='#eab308'" onmouseout="this.style.borderColor=''">
+            <div style="font-size:2rem;margin-bottom:8px">🎨</div>
+            <h3>3. Create</h3>
+            <p class="text-sm text-muted">Generate SEO-optimized titles, descriptions, tags, and design briefs tailored to your persona.</p>
+        </div>
+    </a>
+    <a href="/phase/publish" style="text-decoration:none">
+        <div class="card" style="cursor:pointer;transition:all .2s" onmouseover="this.style.borderColor='#ef4444'" onmouseout="this.style.borderColor=''">
+            <div style="font-size:2rem;margin-bottom:8px">🚀</div>
+            <h3>4. Publish</h3>
+            <p class="text-sm text-muted">Create products on Printify, prepare Etsy/eBay listings, and get everything ready to go live.</p>
+        </div>
+    </a>
+</div>
+
+{% if state.history %}
+<div class="card mt-4">
+    <h2>📋 Session Activity</h2>
+    <div class="timeline">
+    {% for entry in state.history[-5:] %}
+        <div class="timeline-item">
+            <div class="time">{{ entry.action | title }}</div>
+            <div class="text-sm">{{ entry.niche or entry.product or '' }}</div>
+        </div>
+    {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="text-center mt-4">
+    <a href="/phase/research" class="btn btn-primary">Start Research Phase →</a>
+</div>
+{% endblock %}
