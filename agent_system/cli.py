@@ -150,7 +150,12 @@ def main():
     parser = argparse.ArgumentParser(description="Agent System CLI")
     parser.add_argument(
         "mode", nargs="?", default="list",
-        choices=["list", "general", "orchestrator", "planner", "reviewer", "g", "o", "p", "r"],
+        choices=["list", "general", "orchestrator", "planner", "reviewer", "g", "o", "p", "r",
+                 "researcher", "scourer", "coder", "idea_generator", "product_producer", "email_reader",
+                 "architect", "channel_strategist", "competitive_analyst", "copywriter", "creative_director",
+                 "design_spec_agent", "debugger", "tester", "product_strategist", "marketing_strategist",
+                 "social_media_creator", "email_automator", "mockup_generator", "margin_analyst",
+                 "market_validator", "production_advisor", "customer"],
         help="list=show agents, general=run agent, orchestrator=run orchestrator, planner=run planner, reviewer=run reviewer",
     )
     parser.add_argument("args", nargs="*", help="agent_type query... for general, or query for orchestrator")

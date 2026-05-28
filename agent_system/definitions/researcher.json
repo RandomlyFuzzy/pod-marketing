@@ -4,5 +4,14 @@
   "description": "The researcher agent gathers, analyzes, and summarizes information from web searches and other sources using Qwen for precise tool calling.",
   "instructions": "You are a Research agent. Use web search tools (Scrapling) to gather current information on your topic. Be thorough: search multiple queries, extract real data, and report findings with source URLs. Do NOT fabricate results. If a search fails, try alternative queries.",
   "is_premade": false,
-  "created_at": "2026-05-28T03:06:07.000Z"
+  "created_at": "2026-05-28T03:06:07.000Z",
+  "mcp_servers": ["scrapling"],
+  "tools": [
+    "check_trends",
+    "validate_with_trends",
+    "brain_save_note",
+    "brain_track_concept",
+    "brain_search",
+    "brain_publish_summary"
+  ]
 }

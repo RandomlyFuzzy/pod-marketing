@@ -200,14 +200,48 @@ async def create_agent_from_definition(
 ) -> Agent:
     """Create an Agent instance from a registry definition.
     Supports per-agent model override via definition['model'].
+    Supports per-agent tool configuration via definition['mcp_servers'] and definition['tools'].
     """
     client = _make_ollama_client()
     model_name = definition.get("model") or OLLAMA_MODEL
     model = OpenAIChatCompletionsModel(model=model_name, openai_client=client)
     set_default_openai_key("ollama")
 
-    mcp_servers = list(extra_mcp_servers or [])
-    tools = list(CORE_FUNCTION_TOOLS)
+    # Handle MCP servers - use definition if provided, otherwise use extra_mcp_servers or default to scrapling
+    if "mcp_servers" in definition:
+        mcp_servers = []
+        for server_name in definition["mcp_servers"]:
+            if server_name == "scrapling":
+                mcp_servers.append(MCPServerStdio(
+                    name="Scrapling",
+                    params={"command": "scrapling", "args": ["mcp"]},
+                    cache_tools_list=True,
+                ))
+            # Add other MCP servers here as needed
+            # elif server_name == "some_other_server":
+            #     mcp_servers.append(MCPServerStdio(...))
+    else:
+        mcp_servers = list(extra_mcp_servers or [])
+
+    # Handle function tools - use definition if provided, otherwise use core tools
+    if "tools" in definition:
+        # Map tool names to actual function objects
+        tool_map = {
+            "check_trends": check_trends,
+            "validate_with_trends": validate_with_trends,
+            "delegate_to_agent": delegate_to_agent,
+            "create_agent_type": create_agent_type,
+            "brain_save_note": brain_save_note,
+            "brain_track_concept": brain_track_concept,
+            "brain_search": brain_search,
+            "brain_publish_summary": brain_publish_summary,
+        }
+        tools = [tool_map[tool_name] for tool_name in definition["tools"] if tool_name in tool_map]
+        # If no valid tools specified, fall back to core tools
+        if not tools:
+            tools = list(CORE_FUNCTION_TOOLS)
+    else:
+        tools = list(CORE_FUNCTION_TOOLS)
 
     instructions = resolve_instructions(definition)
 

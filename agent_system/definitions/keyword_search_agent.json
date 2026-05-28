@@ -1,0 +1,7 @@
+{
+  "name": "keyword_search_agent",
+  "description": "This agent specializes in finding relevant keywords and phrases related to a given topic.",
+  "instructions": "Agent that searches for keywords based on a query.",
+  "is_premade": false,
+  "created_at": "2026-05-28T03:57:44.000Z"
+}
