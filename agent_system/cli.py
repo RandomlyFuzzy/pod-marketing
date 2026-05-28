@@ -89,6 +89,50 @@ async def interactive_orchestrator():
         print()
 
 
+async def single_planner(task: str):
+    from agent_system.planner_agent import run_planner
+    result = await run_planner(task)
+    print(result)
+
+
+async def interactive_planner():
+    from agent_system.planner_agent import run_planner
+    print(" Planner Agent  (creates subagents + delegates + tracks progress)\n")
+    try:
+        while True:
+            prompt = input(">>> ").strip()
+            if not prompt:
+                continue
+            if prompt.lower() in ("quit", "exit", "q"):
+                break
+            result = await run_planner(prompt)
+            print(f"\n{result}\n")
+    except KeyboardInterrupt:
+        print()
+
+
+async def single_reviewer(task: str):
+    from agent_system.reviewer_agent import run_reviewer
+    result = await run_reviewer(task)
+    print(result)
+
+
+async def interactive_reviewer():
+    from agent_system.reviewer_agent import run_reviewer
+    print(" Reviewer Agent  (reviews work + creates subagents + produces feedback)\n")
+    try:
+        while True:
+            prompt = input(">>> ").strip()
+            if not prompt:
+                continue
+            if prompt.lower() in ("quit", "exit", "q"):
+                break
+            result = await run_reviewer(prompt)
+            print(f"\n{result}\n")
+    except KeyboardInterrupt:
+        print()
+
+
 async def list_agents():
     from agent_system.registry import list_agents
     agents = list_agents()
@@ -106,8 +150,8 @@ def main():
     parser = argparse.ArgumentParser(description="Agent System CLI")
     parser.add_argument(
         "mode", nargs="?", default="list",
-        choices=["list", "general", "orchestrator", "g", "o"],
-        help="list=show agents, general=run an agent, orchestrator=run orchestrator",
+        choices=["list", "general", "orchestrator", "planner", "reviewer", "g", "o", "p", "r"],
+        help="list=show agents, general=run agent, orchestrator=run orchestrator, planner=run planner, reviewer=run reviewer",
     )
     parser.add_argument("args", nargs="*", help="agent_type query... for general, or query for orchestrator")
     args = parser.parse_args()
@@ -117,6 +161,10 @@ def main():
         mode = "general"
     elif mode == "o":
         mode = "orchestrator"
+    elif mode == "p":
+        mode = "planner"
+    elif mode == "r":
+        mode = "reviewer"
 
     if mode == "list":
         asyncio.run(list_agents())
@@ -128,6 +176,22 @@ def main():
             asyncio.run(single_orchestrator(query))
         else:
             asyncio.run(interactive_orchestrator())
+        return
+
+    if mode == "planner":
+        query = " ".join(args.args) if args.args else None
+        if query:
+            asyncio.run(single_planner(query))
+        else:
+            asyncio.run(interactive_planner())
+        return
+
+    if mode == "reviewer":
+        query = " ".join(args.args) if args.args else None
+        if query:
+            asyncio.run(single_reviewer(query))
+        else:
+            asyncio.run(interactive_reviewer())
         return
 
     if mode == "general":

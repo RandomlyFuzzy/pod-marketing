@@ -16,6 +16,8 @@ echo "     start-agent.sh                       — list agents"
 echo "     start-agent.sh general <type>        — interactive [type]"
 echo "     start-agent.sh general <type> <q>    — single-shot [type]"
 echo "     start-agent.sh orchestrator [query]  — orchestrator mode"
+echo "     start-agent.sh planner [goal]        — planner agent"
+echo "     start-agent.sh reviewer [task]       — reviewer agent"
 echo ""
 
 exec "$VENV_PYTHON" -u -m agent_system.cli "$@"
