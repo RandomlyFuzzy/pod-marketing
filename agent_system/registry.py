@@ -112,10 +112,16 @@ def resolve_instructions(definition: dict) -> str:
         "- `get`, `fetch`, `stealthy_fetch`, `bulk_get`, `bulk_fetch`, `screenshot` — Scrapling web tools\n"
         "- `check_trends(keywords, ...)` — Google Trends interest check\n"
         "- `validate_with_trends(product_idea, ...)` — compare demand\n"
+        "- `delegate_to_agent(agent_type, task)` — OFFLOAD work to a sub-agent\n"
+        "- `create_agent_type(name, instructions, description)` — create a custom sub-agent\n"
         "- `brain_save_note(title, content, tags)` — save to brain memory\n"
         "- `brain_track_concept(name)` — register a concept\n"
         "- `brain_search(query)` — search brain memory\n"
         "- `brain_publish_summary(name, content, tags)` — create reference summary\n\n"
+        "OFFLOADING RULE: If a task is mechanical, repetitive, or not core to your current goal "
+        "(like parsing a large document for one fact, running a quick search, or cross-checking data), "
+        "call `delegate_to_agent` to offload it. This keeps you focused on high-value work.\n"
+        "If no existing agent type fits, use `create_agent_type` first to make a custom helper.\n\n"
     )
     custom = definition.get("instructions", "")
     return base + custom

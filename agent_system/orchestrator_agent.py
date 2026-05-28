@@ -54,7 +54,36 @@ async def list_agent_types() -> str:
 
 
 @function_tool
-async def delegate_to_agent(agent_type: str, task: str) -> str:
+async def log_task_status(session_id: str, step: str, task: str, status: str, detail: str = "") -> str:
+    """Log a task's current status to the brain for tracking.
+    
+    Use this at each stage of the loop to track every task's progress.
+    
+    Args:
+        session_id: Your session identifier
+        step: One of: "planned", "delegated", "completed", "needs_rework", "gaps_found", "all_met"
+        task: Description of what the task is
+        status: Short status like "pending", "in_progress", "done", "needs_replan"
+        detail: Optional extra info or context
+    """
+    tags = ["task-log", f"session-{session_id}", step]
+    content = (
+        f"## Task Log: {session_id}\n\n"
+        f"**Step:** {step}\n"
+        f"**Task:** {task}\n"
+        f"**Status:** {status}\n"
+        f"**Detail:** {detail}\n"
+        f"**Timestamp:** iteration\n"
+    )
+    path = save_conversation(
+        title=f"Task {session_id} - {step[:30]}",
+        model=OLLAMA_MODEL,
+        tags=tags,
+        is_chat=False,
+        prompt="",
+        response=content,
+    )
+    return f"Task status logged: {path}"
     """Create and run a specialized agent with a task.
     
     IMPORTANT — the agent gets FULL access to Scrapling web tools, Google Trends,
@@ -122,6 +151,24 @@ You delegate ALL actual work to sub-agents. You NEVER do the work yourself — y
 
 Your final output must be a complete runbook that a human could follow to reproduce every step.
 
+## TASK TRACKING — LOG EVERYTHING
+You MUST call `log_task_status` at EVERY stage:
+
+1. **After planning** — log each task the planner produced with status "pending"
+   `log_task_status(session_id="...", step="planned", task="Step 1: research X", status="pending")`
+
+2. **Before each delegation** — log status "in_progress"
+   `log_task_status(session_id="...", step="delegated", task="Step 1: research X", status="in_progress")`
+
+3. **After each delegation** — log status "done"
+   `log_task_status(session_id="...", step="completed", task="Step 1: research X", status="done")`
+
+4. **After review** — if gaps found, log them:
+   `log_task_status(session_id="...", step="gaps_found", task="[gap description]", status="needs_replan")`
+
+5. **When all goals met** — log final status:
+   `log_task_status(session_id="...", step="all_met", task="All goals achieved", status="completed")`
+
 ## THE SELF-GOVERNANCE LOOP
 
 You run this loop autonomously until all goals are met:
@@ -129,16 +176,19 @@ You run this loop autonomously until all goals are met:
 ### 1. PLAN
 Call `delegate_to_agent(agent_type="planner", task="...")` to break down your goal.
 The planner will produce a step-by-step decomposition with full reasoning and execution log.
+Log each planned task with `log_task_status`.
 Save the plan to the brain with `brain_save_note`.
 
 ### 2. EXECUTE
 For EACH phase in the plan, call `delegate_to_agent` with the right agent type.
 Give each agent a VERY SPECIFIC task — what to research, what format to output, what questions to answer.
+Log each as "in_progress" before delegation and "done" after.
 Track all results with `brain_save_note`.
 
 ### 3. REVIEW
 Call `delegate_to_agent(agent_type="reviewer", task="...")` passing the goal, all results, and asking: are all goals met? What's missing?
 The reviewer will return a detailed audit with each criterion checked and evidence.
+Log gaps found or all-met status.
 
 ### 4. DECIDE
 - If **ALL GOALS MET** → save final synthesis to brain, return results to user, DONE.
@@ -152,6 +202,9 @@ When all goals are met, your final output MUST include:
 **GOAL:** <original goal>
 
 **ITERATIONS COMPLETED:** <number>
+
+**TASK LOG:**
+<summary of all logged tasks and their final statuses>
 
 **FULL EXECUTION LOG:**
 
@@ -169,13 +222,14 @@ This must be complete enough that a human could re-run every step manually.
 ## RULES
 1. You MUST call `delegate_to_agent` for actual work — do not simulate or fabricate results.
 2. Save EVERY intermediate result to the brain for audit trail.
-3. Track EVERY concept you encounter with `brain_track_concept`.
-4. Use `brain_search` at the start to check for prior context.
-5. After "ALL GOALS MET", save a final summary and return it to the user.
-6. If stuck on a phase, create a more specific sub-plan via the planner rather than guessing.
-7. NEVER stop after one iteration if goals remain unmet — keep looping.
-8. Give each agent a detailed task with: context, what to produce, format expectations.
-9. Your final output must be a complete runbook — every prompt sent and every result received."""
+3. Log EVERY task at EVERY stage with `log_task_status`.
+4. Track EVERY concept you encounter with `brain_track_concept`.
+5. Use `brain_search` at the start to check for prior context.
+6. After "ALL GOALS MET", save a final summary and return it to the user.
+7. If stuck on a phase, create a more specific sub-plan via the planner rather than guessing.
+8. NEVER stop after one iteration if goals remain unmet — keep looping.
+9. Give each agent a detailed task with: context, what to produce, format expectations.
+10. Your final output must be a complete runbook — every prompt sent and every result received."""
 
 
 async def create_orchestrator_agent() -> Agent:
@@ -190,6 +244,7 @@ async def create_orchestrator_agent() -> Agent:
         tools=[
             list_agent_types,
             delegate_to_agent,
+            log_task_status,
             brain_save_note,
             brain_track_concept,
             brain_search,

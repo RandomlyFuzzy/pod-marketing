@@ -1,10 +1,11 @@
 """Base agent factory — creates OpenAI Agents SDK Agent instances from definitions."""
 import os
+import sys
 
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
 
 from openai import AsyncOpenAI
-from agents import Agent, function_tool, set_default_openai_key
+from agents import Agent, Runner, function_tool, set_default_openai_key
 from agents.mcp import MCPServerStdio
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 
@@ -14,7 +15,7 @@ from .opnbrain import (
     publish_summary,
     search_brain,
 )
-from .registry import resolve_instructions
+from .registry import resolve_instructions, get_agent, list_agents, create_agent
 from research_agent.tools.google_trends import google_trends_check, google_trends_compare
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -103,9 +104,82 @@ async def brain_publish_summary(
     return f"Summary published: {path}" if path else f"Skipped (bad name: {name!r})"
 
 
+@function_tool
+async def delegate_to_agent(agent_type: str, task: str) -> str:
+    """Offload a task to a specialized sub-agent.
+    
+    Use this for ANY work that's not mission-critical for your current focus:
+    - Parsing large documents for one piece of info
+    - Running repetitive searches or checks
+    - Double-checking facts or calculations
+    - Gathering data while you focus on analysis
+    - Any mechanical/mundane sub-task
+    
+    The sub-agent gets full Scrapling, Trends, and brain tools.
+    
+    Args:
+        agent_type: Agent type (research, scourer, coder, planner, reviewer, idea_generator, product_producer, email_reader)
+        task: Detailed task description
+    """
+    # Planner and reviewer have dedicated modules with full toolkits
+    if agent_type == "planner":
+        from .planner_agent import run_planner
+        print(f"    ▶︎ offloading to [{agent_type}]...")
+        result = await run_planner(task, max_turns=15)
+        print(f"    ✓ [{agent_type}] done")
+        return result
+    elif agent_type == "reviewer":
+        from .reviewer_agent import run_reviewer
+        print(f"    ▶︎ offloading to [{agent_type}]...")
+        result = await run_reviewer(task, max_turns=15)
+        print(f"    ✓ [{agent_type}] done")
+        return result
+
+    definition = get_agent(agent_type)
+    if not definition:
+        types = [a["name"] for a in list_agents()]
+        return f"Agent type '{agent_type}' not found. Available: {', '.join(types)}"
+
+    print(f"    ▶︎ offloading to [{agent_type}]...")
+    async with MCPServerStdio(
+        name="Scrapling",
+        params={"command": "scrapling", "args": ["mcp"]},
+        cache_tools_list=True,
+    ) as scrapling:
+        agent = await create_agent_from_definition(
+            definition=definition,
+            extra_mcp_servers=[scrapling],
+        )
+        result = await Runner.run(agent, task, max_turns=12)
+    print(f"    ✓ [{agent_type}] done")
+    return result.final_output
+
+
+@function_tool
+async def create_agent_type(name: str, instructions: str, description: str = "") -> str:
+    """Create a new custom agent type on the fly.
+    
+    Use this when no existing agent type fits your sub-task.
+    The new agent will have Scrapling, Trends, delegation, and brain tools.
+    
+    Args:
+        name: Unique name for the new agent
+        instructions: What the agent does and how it behaves
+        description: Short description
+    """
+    try:
+        agent = create_agent(name=name, instructions=instructions,
+                             description=description, is_premade=False)
+        return f"Agent type '{agent['name']}' created. Call delegate_to_agent(agent_type='{name}', task='...') to run it."
+    except ValueError as e:
+        return str(e)
+
+
 CORE_FUNCTION_TOOLS = [
     check_trends,
     validate_with_trends,
+    delegate_to_agent,
+    create_agent_type,
     brain_save_note,
     brain_track_concept,
     brain_search,
