@@ -9,17 +9,13 @@ export OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e2b-128k}"
 export OPENAI_AGENTS_DISABLE_TRACING=1
 export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$REPO_DIR"
 
-MODE="${1:-general}"
-shift 2>/dev/null || true
-
-if [ "$MODE" = "general" ] || [ "$MODE" = "g" ]; then
-    echo " General Agent  (Scrapling + Trends + opnbrain)"
-elif [ "$MODE" = "orchestrator" ] || [ "$MODE" = "o" ]; then
-    echo " Orchestrator Agent  (delegates + opnbrain)"
-fi
+echo " Agent System"
 echo "   Ollama: $OLLAMA_URL  Model: $OLLAMA_MODEL"
-echo "   Usage: start-agent.sh [general|orchestrator] [query...]"
-echo "         (no query = interactive mode)"
+echo "   Usage:"
+echo "     start-agent.sh                       — list agents"
+echo "     start-agent.sh general <type>        — interactive [type]"
+echo "     start-agent.sh general <type> <q>    — single-shot [type]"
+echo "     start-agent.sh orchestrator [query]  — orchestrator mode"
 echo ""
 
-exec "$VENV_PYTHON" -u -m agent_system.cli "$MODE" "$@"
+exec "$VENV_PYTHON" -u -m agent_system.cli "$@"
